@@ -160,11 +160,8 @@ pub fn run_prepared(
             format!("{} is not run through the bio_tools adapters", spec.name()),
         ));
     }
-    if !spec.is_supported() {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("{} requires Linux", spec.name()),
-        ));
+    if let Some(message) = spec.unavailable_message() {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, message));
     }
 
     let executables = process_executables_dir()?;

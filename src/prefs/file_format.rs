@@ -629,7 +629,9 @@ impl Selection {
         let mut out = Vec::new();
         match self {
             // Evaluated indices are transient; named expressions are saved separately.
-            Selection::None | Selection::Atoms(_) => out.push(0),
+            Selection::None | Selection::Atoms(_) | Selection::ResiduesNucleicAcid(_) => {
+                out.push(0)
+            }
             Selection::AtomPeptide(i) => {
                 out.push(1);
                 out.extend_from_slice(&(*i as u64).to_le_bytes());

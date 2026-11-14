@@ -53,6 +53,7 @@ mod mol_db;
 mod mol_diagrams;
 mod mol_editor;
 mod mol_manip;
+mod nucleic_acid_creation;
 mod orca;
 mod peptide_creation;
 mod peptide_ligands;

@@ -881,11 +881,8 @@ impl ToolWindow {
         let spec = tool.spec();
         let busy = self.busy();
         let installed = external_tools::is_installed(tool);
-        if !spec.is_supported() {
-            ui.colored_label(
-                Color32::ORANGE,
-                "Boltz-2 requires Linux on this installation.",
-            );
+        if let Some(message) = spec.unavailable_message() {
+            ui.colored_label(Color32::ORANGE, format!("{message}."));
         }
         let mut run = false;
         let mut install = false;
@@ -1013,10 +1010,10 @@ impl ToolWindow {
             tool_links(self.tool, ui);
         });
 
-        if !spec.is_supported() {
+        if let Some(message) = spec.unavailable_message() {
             ui.colored_label(
                 Color32::ORANGE,
-                "This tool requires Linux. Inputs and results can still be viewed here.",
+                format!("{message}. Inputs and results can still be viewed here."),
             );
         }
 

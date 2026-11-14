@@ -359,6 +359,18 @@ pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mu
 
                 disp_atom_data(atom, &mol.residues, Some(posit), ui, true, true);
             }
+            Selection::ResiduesNucleicAcid((mol_i, indices)) => {
+                if let [i] = indices.as_slice() {
+                    if let Some(residue) = state
+                        .get_nucleic_acid(*mol_i)
+                        .and_then(|m| m.residues.get(*i))
+                    {
+                        ui.label(format!("#{} {}", residue.serial_number, residue.res_type));
+                    }
+                } else {
+                    ui.label(format!("{} residues", indices.len()));
+                }
+            }
             // todo DRY
             Selection::AtomLipid((mol_i, atom_i)) => {
                 let Some(mol) = state.get_lipid(*mol_i) else {

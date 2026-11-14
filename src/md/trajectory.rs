@@ -313,6 +313,35 @@ impl Trajectory {
     }
 }
 
+/// Drop a trajectory's loaded frames from memory, but keep it open.
+pub fn unload_traj(
+    state: &mut State,
+    i: usize,
+    scene: &mut graphics::Scene,
+    redraw: &mut crate::util::RedrawFlags,
+    updates: &mut graphics::EngineUpdates,
+) {
+    let Some(traj) = state.trajectories.get_mut(i) else {
+        eprintln!("Error: Trying to unload a trajectory that's out of bounds");
+        return;
+    };
+
+    let showing_frames = traj.ui_active;
+    traj.frames_open = None;
+    traj.ui_active = false;
+
+    if showing_frames {
+        let md = &mut state.volatile.md_local;
+
+        // Keep the mol set selection, so loading again pairs with it.
+        let mol_set_active = md.viewer.mol_set_active;
+        md.clear_snaps(&mut scene.entities, redraw);
+        md.viewer.mol_set_active = mol_set_active;
+
+        updates.entities = graphics::EntityUpdate::All;
+    }
+}
+
 pub fn close_traj(
     state: &mut State,
     i: usize,

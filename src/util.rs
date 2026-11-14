@@ -150,7 +150,7 @@ impl RedrawFlags {
                 self.peptide = true
             }
             AtomLig(_) | AtomsLig(_) | BondLig(_) | BondsLig(_) => self.ligand = true,
-            AtomNucleicAcid(_) | BondNucleicAcid(_) => self.na = true,
+            AtomNucleicAcid(_) | BondNucleicAcid(_) | ResiduesNucleicAcid(_) => self.na = true,
             AtomLipid(_) | BondLipid(_) => self.lipid = true,
             AtomPocket(_) | BondPocket(_) => self.pocket = true,
             None | ComponentEditor(_) => (),
@@ -243,7 +243,7 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
 
     if state.ui.orbit_selected_atom && state.volatile.operating_mode != OperatingMode::MolEditor {
         match &state.ui.selection {
-            Selection::Atoms(_) => {
+            Selection::Atoms(_) | Selection::ResiduesNucleicAcid(_) => {
                 let points = crate::selection::expression::positions(state);
                 if !points.is_empty() {
                     let sum = points

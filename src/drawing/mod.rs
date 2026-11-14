@@ -4,7 +4,7 @@
 use std::{fmt, fmt::Display, io, io::ErrorKind, str::FromStr, sync::OnceLock};
 
 use bincode::{Decode, Encode};
-use bio_files::BondType;
+use bio_files::{BondType, ResidueType};
 use egui::{Color32, FontFamily};
 use graphics::{EngineUpdates, Entity, Outline, Scene, TextOverlay, UP_VEC};
 use lin_alg::{
@@ -30,13 +30,14 @@ use crate::{
     },
     mol_editor,
     mol_manip::ManipMode,
+    nucleic_acid_creation::{base_color, nucleotide},
     prefs::OpenType,
     render::{
         Color, MESH_BOND, MESH_CUBE, MESH_POCKET_START, MESH_SPHERE_HIGHRES, MESH_SPHERE_LOWRES,
         MESH_SPHERE_MEDRES,
     },
     selection::{Selection, ViewSelLevel},
-    state::{OperatingMode, State, StateUi, Visibility},
+    state::{OperatingMode, ResColoring, State, StateUi, Visibility},
     util::{aromatic_ring_centroid, find_neighbor_posit, truncate_str},
 };
 
@@ -829,6 +830,89 @@ pub fn draw_mol_with_pharmacophore_visibility(
         MolGenericRef::Small(m) => &m.components,
         _ => &None,
     };
+    let nucleic = match &mol {
+        MolGenericRef::NucleicAcid(m) if ui.view_sel_level == ViewSelLevel::Residue => Some(*m),
+        _ => None,
+    };
+    let atom_color = |atom: &Atom, i| {
+        let color = atoms_bonds::atom_color(
+            atom,
+            mol_i,
+            i,
+            &[],
+            None,
+            0,
+            0,
+            &[],
+            &[],
+            sel,
+            ViewSelLevel::AtomBond,
+            ui.res_coloring,
+            ui.atom_color_by_charge
+                .then_some(ui.inspection.charge_palette),
+            mol.mol_type(),
+            components,
+        );
+        if color == COLOR_SELECTED {
+            return color;
+        }
+
+        if let Some(m) = nucleic
+            && let Some(i) = atom.residue
+            && let Some(res) = m.residues.get(i)
+        {
+            let by_position = || color_viridis(i, 0, m.residues.len().saturating_sub(1));
+
+            return match ui.res_coloring {
+                ResColoring::Chain => atom
+                    .chain
+                    .map_or_else(by_position, |c| color_viridis(c, 0, 1)),
+                ResColoring::AminoAcid => {
+                    let nt = match &res.res_type {
+                        ResidueType::Other(name) => {
+                            let first_base = name
+                                .split_once('-')
+                                .map_or(name.as_str(), |(first, _)| first);
+                            let mut letters = first_base
+                                .trim_start_matches('D')
+                                .trim_end_matches(['3', '5', 'N'])
+                                .chars();
+                            match (letters.next(), letters.next()) {
+                                (Some(ch), None) => nucleotide(ch, m.na_type),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+
+                    nt.map_or_else(by_position, |nt| {
+                        let [r, g, b, _] = base_color(nt).to_array();
+                        (
+                            f32::from(r) / 255.,
+                            f32::from(g) / 255.,
+                            f32::from(b) / 255.,
+                        )
+                    })
+                }
+                _ => by_position(),
+            };
+        }
+
+        match mol.mol_type() {
+            MolType::Ligand if mode == OperatingMode::Primary => mod_color_for_ligand(
+                &color,
+                atom.element,
+                ui.atom_color_by_charge,
+                ui.color_by_mol,
+                mol_i,
+                num_mols,
+            ),
+            MolType::NucleicAcid | MolType::Lipid => {
+                blend_color(color, LIPID_COLOR, LIPID_BLEND_AMT)
+            }
+            _ => color,
+        }
+    };
 
     if matches!(
         mol_view,
@@ -883,48 +967,7 @@ pub fn draw_mol_with_pharmacophore_visibility(
             }
 
             if !manip_active {
-                color = atoms_bonds::atom_color(
-                    atom,
-                    mol_i,
-                    i_atom,
-                    &[],
-                    None,
-                    0,
-                    0,
-                    &[],
-                    &[],
-                    sel,
-                    ViewSelLevel::AtomBond, // Small molecules use element or charge colors.
-                    ui.res_coloring,
-                    ui.atom_color_by_charge
-                        .then_some(ui.inspection.charge_palette),
-                    mol.mol_type(),
-                    components,
-                );
-
-                if color != COLOR_SELECTED {
-                    match mol.mol_type() {
-                        MolType::Ligand => {
-                            if mode == OperatingMode::Primary {
-                                color = mod_color_for_ligand(
-                                    &color,
-                                    atom.element,
-                                    ui.atom_color_by_charge,
-                                    ui.color_by_mol,
-                                    mol_i,
-                                    num_mols,
-                                )
-                            }
-                        }
-                        // todo: Lipid and NA caches A/R
-                        // todo: Color for NA
-                        MolType::NucleicAcid => {
-                            color = blend_color(color, LIPID_COLOR, LIPID_BLEND_AMT)
-                        }
-                        MolType::Lipid => color = blend_color(color, LIPID_COLOR, LIPID_BLEND_AMT),
-                        _ => (),
-                    }
-                }
+                color = atom_color(atom, i_atom);
             }
 
             if !manip_active
@@ -1135,42 +1178,8 @@ pub fn draw_mol_with_pharmacophore_visibility(
         }
 
         if !manip_active {
-            color_0 = atoms_bonds::atom_color(
-                atom_0,
-                mol_i,
-                bond.atom_0,
-                &[],
-                None,
-                0,
-                0,
-                &[],
-                &[],
-                sel,
-                ViewSelLevel::AtomBond, // Always color ligands by atom.
-                ui.res_coloring,
-                ui.atom_color_by_charge
-                    .then_some(ui.inspection.charge_palette),
-                mol.mol_type(),
-                components,
-            );
-            color_1 = atoms_bonds::atom_color(
-                atom_1,
-                mol_i,
-                bond.atom_1,
-                &[],
-                None,
-                0,
-                0,
-                &[],
-                &[],
-                sel,
-                ViewSelLevel::AtomBond, // Always color ligands by atom.
-                ui.res_coloring,
-                ui.atom_color_by_charge
-                    .then_some(ui.inspection.charge_palette),
-                mol.mol_type(),
-                components,
-            );
+            color_0 = atom_color(atom_0, bond.atom_0);
+            color_1 = atom_color(atom_1, bond.atom_1);
 
             // Atom selections color the adjacent half-bonds above; bond selections color both
             // halves of each selected bond below.
@@ -1192,36 +1201,6 @@ pub fn draw_mol_with_pharmacophore_visibility(
                 }
                 _ => (),
             };
-
-            let helper = |atom: &Atom, color: &mut Color| {
-                if *color != COLOR_SELECTED {
-                    match mol.mol_type() {
-                        MolType::Ligand => {
-                            if mode == OperatingMode::Primary {
-                                *color = mod_color_for_ligand(
-                                    color,
-                                    atom.element,
-                                    ui.atom_color_by_charge,
-                                    ui.color_by_mol,
-                                    mol_i,
-                                    num_mols,
-                                )
-                            }
-                        }
-                        // todo: Color for NA
-                        MolType::NucleicAcid => {
-                            *color = blend_color(*color, LIPID_COLOR, LIPID_BLEND_AMT)
-                        }
-                        MolType::Lipid => {
-                            *color = blend_color(*color, LIPID_COLOR, LIPID_BLEND_AMT)
-                        }
-                        _ => (),
-                    }
-                }
-            };
-
-            helper(atom_0, &mut color_0);
-            helper(atom_1, &mut color_1);
         }
 
         if !manip_active && let Some(colors) = scalar_colors {

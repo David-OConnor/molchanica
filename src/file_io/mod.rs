@@ -52,6 +52,7 @@ use crate::{
     external_tools::{Tool, find_executable},
     md::{trajectory::Trajectory, viewer::SnapshotViewer},
     mol_db::ParquetMolDb,
+    nucleic_acid_creation::nucleotide,
     pocket_render::PocketRender,
     prefs::{OpenHistory, OpenType},
     reflection::DensityRectExt,
@@ -145,11 +146,11 @@ pub(crate) struct SessionRestoreItem {
     pub payload: SessionRestorePayload,
 }
 
-/// A nucleic acid or lipid from the Mol2 of a creation panel's managed entry; see
-/// `managed_mols::store_created`. Mol2 has no residues, so these are empty.
+/// Load a nucleic acid or lipid from a creation panel's managed Mol2.
 fn created_mol_from_mol2(
     mol2: Mol2,
     mol_type: MolType,
+    query: &str,
     path: &Path,
 ) -> io::Result<MoleculeGeneric> {
     let mut atoms: Vec<Atom> = mol2.atoms.iter().map(|a| a.into()).collect();
@@ -180,11 +181,18 @@ fn created_mol_from_mol2(
                 _ => NucleicAcidType::Dna,
             };
 
-            MoleculeGeneric::NucleicAcid(MoleculeNucleicAcid {
+            let mut mol = MoleculeNucleicAcid {
                 na_type,
                 common,
+                seq: query
+                    .chars()
+                    .filter_map(|ch| nucleotide(ch, na_type))
+                    .collect(),
                 ..Default::default()
-            })
+            };
+            managed_mols::restore_nucleic_acid_residues(&mut mol)?;
+
+            MoleculeGeneric::NucleicAcid(mol)
         }
         _ => {
             let mut mol = MoleculeLipid {
@@ -249,8 +257,10 @@ pub(crate) fn parse_session_history(
                 "mol2" => {
                     let mol2 = Mol2::load(path)?;
 
-                    if let Some(mol_type) = manifest.as_ref().and_then(|m| m.created_mol_type()) {
-                        created_mol_from_mol2(mol2, mol_type, path)?
+                    if let Some(manifest) = &manifest
+                        && let Some(mol_type) = manifest.created_mol_type()
+                    {
+                        created_mol_from_mol2(mol2, mol_type, &manifest.query, path)?
                     } else {
                         let mut molecule: MoleculeSmall = mol2.try_into()?;
                         molecule.common.update_path(path);
@@ -525,9 +535,10 @@ impl State {
             "mol2" => {
                 let mol2 = Mol2::load(path)?;
 
-                if let Some(mol_type) = managed_manifest.as_ref().and_then(|m| m.created_mol_type())
+                if let Some(manifest) = &managed_manifest
+                    && let Some(mol_type) = manifest.created_mol_type()
                 {
-                    created_mol_from_mol2(mol2, mol_type, path)
+                    created_mol_from_mol2(mol2, mol_type, &manifest.query, path)
                 } else {
                     let mut m: MoleculeSmall = mol2.try_into()?;
                     m.common.update_path(path);

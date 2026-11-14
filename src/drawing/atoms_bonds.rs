@@ -175,6 +175,7 @@ pub fn atom_color(
         }
         Selection::Residue(sel_i) => {
             if let Some(res_i) = atom.residue
+                && mol_type == MolType::Peptide
                 && res_i == *sel_i
             {
                 result = COLOR_SELECTED;
@@ -182,6 +183,7 @@ pub fn atom_color(
         }
         Selection::Residues(sel_is) => {
             if let Some(res_i) = atom.residue
+                && mol_type == MolType::Peptide
                 && sel_is.contains(&res_i)
             {
                 result = COLOR_SELECTED;
@@ -204,6 +206,14 @@ pub fn atom_color(
         }
         Selection::AtomNucleicAcid((i_mol_sel, sel_i)) => {
             if mol_type == MolType::NucleicAcid && *sel_i == item_i && *i_mol_sel == mol_i {
+                result = COLOR_SELECTED;
+            }
+        }
+        Selection::ResiduesNucleicAcid((i_mol_sel, residues)) => {
+            if mol_type == MolType::NucleicAcid
+                && *i_mol_sel == mol_i
+                && atom.residue.is_some_and(|i| residues.contains(&i))
+            {
                 result = COLOR_SELECTED;
             }
         }

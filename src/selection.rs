@@ -62,6 +62,8 @@ pub enum Selection {
     AtomsLig((usize, Vec<usize>)),
     /// Molecule index, atom index
     AtomNucleicAcid((usize, usize)),
+    /// Molecule index, residue indices
+    ResiduesNucleicAcid((usize, Vec<usize>)),
     /// Molecule index, atom index
     AtomLipid((usize, usize)),
     AtomPocket((usize, usize)),
@@ -543,8 +545,7 @@ pub fn find_sel_from_cursor_ray(
                         Selection::AtomPeptide(nearest.atom_i)
                     }
                 }
-                // Residue selection only applies to peptides. For all other molecule types,
-                // preserve the atom-versus-bond result from the corresponding picking pass.
+                // Preserve atom-versus-bond picking until the winning molecule is known.
                 MolType::Ligand | MolType::NucleicAcid | MolType::Lipid | MolType::Pocket => {
                     if bond_mode {
                         Selection::from_bond(nearest.mol_type, indices.0, indices.1)
@@ -1047,8 +1048,7 @@ pub(crate) fn handle_selection_attempt(
         sel_bonds
     };
 
-    // In Residue mode, convert the winning peptide atom/bond selection to a Residue.
-    // This mirrors the Atom/Bond mode logic: find the nearest atom or bond first, then classify.
+    // In Residue mode, select the residue of the winning atom or bond.
     let selection = if state.ui.view_sel_level == ViewSelLevel::Residue {
         let shift_held = state.volatile.inputs_commanded.run;
         match &selection {
@@ -1089,6 +1089,9 @@ pub(crate) fn handle_selection_attempt(
                     }
                 }
             }
+            Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => {
+                nucleic_residue_selection(state, &selection, shift_held).unwrap_or(selection)
+            }
             _ => selection,
         }
     } else {
@@ -1108,6 +1111,39 @@ pub(crate) fn handle_selection_attempt(
     }
 
     redraw.set_all();
+}
+
+fn nucleic_residue_selection(
+    state: &State,
+    selection: &Selection,
+    extend: bool,
+) -> Option<Selection> {
+    let (mol_i, atom_i) = match *selection {
+        Selection::AtomNucleicAcid((m, a)) => (m, a),
+        Selection::BondNucleicAcid((m, b)) => {
+            (m, state.get_nucleic_acid(m)?.common.bonds.get(b)?.atom_0)
+        }
+        _ => return None,
+    };
+
+    let mol = state.get_nucleic_acid(mol_i)?;
+    let i = mol.common.atoms.get(atom_i)?.residue?;
+    mol.residues.get(i)?;
+    let mut residues = match &state.ui.selection {
+        Selection::ResiduesNucleicAcid((m, residues)) if extend && *m == mol_i => residues.clone(),
+        _ => Vec::new(),
+    };
+    if let Some(pos) = residues.iter().position(|&r| r == i) {
+        residues.remove(pos);
+    } else {
+        residues.push(i);
+    }
+
+    Some(if residues.is_empty() {
+        Selection::None
+    } else {
+        Selection::ResiduesNucleicAcid((mol_i, residues))
+    })
 }
 
 /// A stripped-down version, for the mol editor. See notes there where applicable.
@@ -1338,7 +1374,7 @@ fn ray_metrics(ray_origin: Vec3F32, ray_dir: Vec3F32, posit: Vec3F32) -> (f32, f
     (dist_to_ray, t)
 }
 
-/// Choose individual atoms/bonds or whole peptide residues for selection and coloring.
+/// Choose individual atoms/bonds or whole residues for selection and coloring.
 #[derive(Clone, Copy, PartialEq, Debug, Default, Encode, Decode)]
 pub enum ViewSelLevel {
     #[default]
@@ -1502,6 +1538,10 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
     let Some(mol) = state.active_mol() else {
         return;
     };
+    let nucleic = match mol {
+        mol_defs::molecules::MolGenericRef::NucleicAcid(m) if !m.residues.is_empty() => Some(m),
+        _ => None,
+    };
     let mol = mol.common();
 
     let dir = if reverse { -1 } else { 1 };
@@ -1511,44 +1551,32 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
             state.ui.selection = cycle_atom_bond(state, mol, dir);
         }
         ViewSelLevel::Residue => {
-            if state.volatile.active_mol.as_ref().unwrap().0 != MolType::Peptide {
-                // Non-peptide molecules have no residues; fall back to atom/bond cycling.
+            let (kind, mol_i) = state.volatile.active_mol.unwrap();
+            if let Some(nucleic) = nucleic {
+                let current = match &state.ui.selection {
+                    Selection::ResiduesNucleicAcid((m, indices)) if *m == mol_i => {
+                        indices.first().copied()
+                    }
+                    _ => None,
+                };
+                let next = current
+                    .map(|i| i.saturating_add_signed(dir).min(nucleic.residues.len() - 1))
+                    .unwrap_or(0);
+                state.ui.selection = Selection::ResiduesNucleicAcid((mol_i, vec![next]));
+            } else if kind != MolType::Peptide {
                 state.ui.selection = cycle_atom_bond(state, mol, dir);
                 return;
-            }
-
-            let Some(mol) = state
+            } else if let Some(mol) = state
                 .peptide_for_tools_i()
                 .and_then(|i| state.peptides.get(i))
-            else {
-                return;
-            };
-
-            match &state.ui.selection {
-                Selection::Residue(res_i) => {
-                    for chain in &mol.chains {
-                        if chain.residues.contains(res_i) {
-                            // Pick a residue from the chain the current selection is on.
-                            let mut new_res_i = *res_i as isize;
-
-                            while new_res_i < (mol.residues.len() as isize) - 1 && new_res_i >= 0 {
-                                new_res_i += dir;
-                                let nri = new_res_i as usize;
-                                if chain.residues.contains(&nri) {
-                                    state.ui.selection = Selection::Residue(nri);
-                                    break;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-                Selection::Residues(is) => {
-                    // Cycle from the first residue in the set.
-                    if let Some(&first) = is.first() {
+            {
+                match &state.ui.selection {
+                    Selection::Residue(res_i) => {
                         for chain in &mol.chains {
-                            if chain.residues.contains(&first) {
-                                let mut new_res_i = first as isize;
+                            if chain.residues.contains(res_i) {
+                                // Pick a residue from the chain the current selection is on.
+                                let mut new_res_i = *res_i as isize;
+
                                 while new_res_i < (mol.residues.len() as isize) - 1
                                     && new_res_i >= 0
                                 {
@@ -1563,10 +1591,31 @@ pub fn cycle_selected(state: &mut State, scene: &mut Scene, reverse: bool) {
                             }
                         }
                     }
-                }
-                _ => {
-                    if !mol.residues.is_empty() {
-                        state.ui.selection = Selection::Residue(0);
+                    Selection::Residues(is) => {
+                        // Cycle from the first residue in the set.
+                        if let Some(&first) = is.first() {
+                            for chain in &mol.chains {
+                                if chain.residues.contains(&first) {
+                                    let mut new_res_i = first as isize;
+                                    while new_res_i < (mol.residues.len() as isize) - 1
+                                        && new_res_i >= 0
+                                    {
+                                        new_res_i += dir;
+                                        let nri = new_res_i as usize;
+                                        if chain.residues.contains(&nri) {
+                                            state.ui.selection = Selection::Residue(nri);
+                                            break;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        if !mol.residues.is_empty() {
+                            state.ui.selection = Selection::Residue(0);
+                        }
                     }
                 }
             }
@@ -1654,6 +1703,27 @@ fn search_hits(state: &State, query: &str) -> (Vec<Selection>, usize) {
     let Some(mol) = state.get_mol(mol_type, mol_i) else {
         return none;
     };
+    if state.ui.view_sel_level == ViewSelLevel::Residue
+        && let mol_defs::molecules::MolGenericRef::NucleicAcid(mol) = &mol
+        && !mol.residues.is_empty()
+    {
+        let serial = query.strip_prefix('#').unwrap_or(query).parse::<u32>();
+        let hits = mol
+            .residues
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| match serial {
+                Ok(sn) => r.serial_number == sn,
+                Err(_) => expression::residue_name(r).eq_ignore_ascii_case(query),
+            });
+
+        return (
+            hits.map(|(i, _)| Selection::ResiduesNucleicAcid((mol_i, vec![i])))
+                .collect(),
+            0,
+        );
+    }
+
     let mol = mol.common();
 
     let pep = if mol_type == MolType::Peptide {
@@ -1789,7 +1859,19 @@ impl State {
             return;
         }
 
-        if let Some(peptide) = self.peptide_for_tools() {
+        if level == ViewSelLevel::Residue
+            && let Some(selection) = nucleic_residue_selection(self, &self.ui.selection, false)
+        {
+            self.ui.selection = selection;
+        } else if level == ViewSelLevel::AtomBond
+            && let Selection::ResiduesNucleicAcid((i, indices)) = &self.ui.selection
+        {
+            self.ui.selection = self
+                .get_nucleic_acid(*i)
+                .and_then(|m| m.residues.get(*indices.first()?))
+                .and_then(|r| r.atoms.first())
+                .map_or(Selection::None, |&a| Selection::AtomNucleicAcid((*i, a)));
+        } else if let Some(peptide) = self.peptide_for_tools() {
             self.ui.selection = level.convert_selection(&self.ui.selection, peptide);
         }
         self.ui.view_sel_level = level;
@@ -1804,7 +1886,10 @@ impl State {
     /// Resolve an atom or residue selection to a camera target. For multiple peptide atoms or
     /// residues, use the first selected item. Invalid and unsupported selections have no target.
     pub fn selected_target(&self) -> Option<lin_alg::f64::Vec3> {
-        if matches!(self.ui.selection, Selection::Atoms(_)) {
+        if matches!(
+            self.ui.selection,
+            Selection::Atoms(_) | Selection::ResiduesNucleicAcid(_)
+        ) {
             let points = expression::positions(self);
             return (!points.is_empty()).then(|| {
                 points

@@ -48,6 +48,7 @@ use crate::{
     mol_db::ParquetMolDb,
     mol_editor::MolEditorState,
     mol_manip::MolManip,
+    nucleic_acid_creation::ResidueGrouping,
     orca::StateOrca,
     peptide_creation::PeptideGeometry,
     peptide_ligands::LigAttachUi,
@@ -749,6 +750,7 @@ pub struct StateUi {
     pub aa_seq_to_create: String,
     /// Initial backbone geometry shared by the peptide creation controls.
     pub aa_geometry_to_create: PeptideGeometry,
+    pub na_residue_grouping: ResidueGrouping,
 }
 
 /// Search, filters, sorting, and manual order of the sidebar's molecule picker.

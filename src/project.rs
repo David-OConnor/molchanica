@@ -32,6 +32,7 @@ use na_seq::{
     AtomTypeInRes, Element, Nucleotide, SeqFeature, SeqRange, SeqTopology, Sequence, SequenceData,
     Strand,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     inspection::SceneState,
@@ -266,8 +267,8 @@ fn finite(p: Vec3) -> bool {
     p.x.is_finite() && p.y.is_finite() && p.z.is_finite()
 }
 
-#[derive(Encode, Decode)]
-struct SavedResidue {
+#[derive(Encode, Decode, Deserialize, Serialize)]
+pub(crate) struct SavedResidue {
     serial: u32,
     name: String,
     atoms: Vec<usize>,
@@ -275,7 +276,7 @@ struct SavedResidue {
 }
 
 impl SavedResidue {
-    fn capture(r: &Residue) -> Self {
+    pub(crate) fn capture(r: &Residue) -> Self {
         Self {
             serial: r.serial_number,
             name: match &r.res_type {
@@ -287,7 +288,7 @@ impl SavedResidue {
         }
     }
 
-    fn restore(self, atoms: &[Atom]) -> io::Result<Residue> {
+    pub(crate) fn restore(self, atoms: &[Atom], kind: MolType) -> io::Result<Residue> {
         let ends = [
             ResidueEnd::Internal,
             ResidueEnd::NTerminus,
@@ -307,7 +308,11 @@ impl SavedResidue {
 
         Ok(Residue {
             serial_number: self.serial,
-            res_type: ResidueType::from_str(&self.name),
+            res_type: if kind == MolType::NucleicAcid {
+                ResidueType::Other(self.name)
+            } else {
+                ResidueType::from_str(&self.name)
+            },
             atoms: self.atoms,
             atom_sns,
             dihedral: None,
@@ -500,13 +505,13 @@ impl Molecule {
     }
 
     fn restore(self, mols: &mut RestoredMols) -> io::Result<()> {
+        let kind = kind_from(self.kind)?;
         let common = self.common.restore()?;
         let residues = self
             .residues
             .into_iter()
-            .map(|r| r.restore(&common.atoms))
+            .map(|r| r.restore(&common.atoms, kind))
             .collect::<io::Result<Vec<_>>>()?;
-        let kind = kind_from(self.kind)?;
         if matches!(
             kind,
             MolType::Peptide | MolType::NucleicAcid | MolType::Lipid

@@ -271,10 +271,14 @@ impl ToolSpec {
         }
     }
 
-    /// The badge shown beside an unavailable tool. `bio_tools` excludes a recipe only where
-    /// upstream publishes for Linux alone, so that is what being unsupported means.
-    pub fn platform_label(&self) -> Option<&'static str> {
-        (!self.is_supported()).then_some("Linux only")
+    /// The badge shown beside a tool unavailable on this platform.
+    pub fn platform_label(&self) -> Option<String> {
+        (!self.is_supported()).then(|| format!("Not available on {OS_NAME}"))
+    }
+
+    /// Why this tool can't be installed or run here, if it can't.
+    pub fn unavailable_message(&self) -> Option<String> {
+        (!self.is_supported()).then(|| format!("{} is not available on {OS_NAME}", self.name()))
     }
 
     /// User-facing instruction for installing this tool.
@@ -282,8 +286,8 @@ impl ToolSpec {
         if !self.molchanica_managed {
             return self.install_hint.to_owned();
         }
-        if !self.is_supported() {
-            return format!("{} is available on Linux only.", self.name());
+        if let Some(message) = self.unavailable_message() {
+            return format!("{message}.");
         }
         format!(
             "Install {} from Molchanica's Tools panel (recipe `{}`).",
@@ -299,6 +303,15 @@ impl ToolSpec {
 
 /// The install hint every Molchanica-managed tool shares.
 const MANAGED_HINT: &str = "Install from Molchanica's Tools panel.";
+
+/// This platform's name, for messages about tools unavailable here.
+const OS_NAME: &str = if cfg!(target_os = "windows") {
+    "Windows"
+} else if cfg!(target_os = "macos") {
+    "macOS"
+} else {
+    "Linux"
+};
 
 /// The single description of every tool. See the module docs for how it is used.
 pub static REGISTRY: &[ToolSpec] = &[
@@ -624,10 +637,13 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "linux"))]
     fn only_the_linux_only_recipes_are_gated() {
-        assert_eq!(
-            gated(),
-            ["Chai-1", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
-        );
+        // Chai-1 also runs on Apple Silicon, on the CPU.
+        let expected: &[&str] = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            &["Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+        } else {
+            &["Chai-1", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+        };
+        assert_eq!(gated(), expected);
     }
 
     /// The tools the user installs themselves are never gated, whatever `bio_tools` says about a

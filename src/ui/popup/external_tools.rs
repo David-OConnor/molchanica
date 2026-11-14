@@ -637,11 +637,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                 visible_tools += 1;
                 let Some(status) = statuses.get(&tool) else {
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("[Checking…]")
-                                .color(COLOR_ACTION)
-                                .monospace(),
-                        );
+                        ui.label(RichText::new("[Checking…]").color(COLOR_ACTION).monospace());
                         ui.label(RichText::new(spec.name()).strong());
                         if let Some(label) = spec.platform_label() {
                             ui.label(RichText::new(label).color(Color32::LIGHT_BLUE).small());
@@ -664,9 +660,7 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     );
                     ui.label(RichText::new(spec.name()).strong());
                     if let Some(label) = spec.platform_label() {
-                        ui.label(
-                            RichText::new(label).color(Color32::LIGHT_BLUE).small(),
-                        );
+                        ui.label(RichText::new(label).color(Color32::LIGHT_BLUE).small());
                     }
 
                     if ui
@@ -690,46 +684,43 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                     if status.result != CheckResult::CantFind {
                         let place = queue.place(status.tool);
                         let confirming = tools.confirm_uninstall == Some(status.tool);
-                        let (has_managed_files, disk_text, disk_hover) =
-
-                            if !spec.molchanica_managed {
-                                (
-                                    false,
-                                    "Disk: managed externally".to_owned(),
-                                    Some(
-                                        "Molchanica cannot estimate a system- or vendor-managed \
+                        let (has_managed_files, disk_text, disk_hover) = if !spec.molchanica_managed
+                        {
+                            (
+                                false,
+                                "Disk: managed externally".to_owned(),
+                                Some(
+                                    "Molchanica cannot estimate a system- or vendor-managed \
                                          installation."
+                                        .to_owned(),
+                                ),
+                            )
+                        } else {
+                            match tools.disk_usage.get(&status.tool) {
+                                Some(Ok(Some(bytes))) => (
+                                    true,
+                                    format!("Disk: ~{}", format_disk_size(*bytes)),
+                                    Some(
+                                        "Molchanica-managed files only; upstream model caches \
+                                             outside Molchanica's data directory are excluded."
                                             .to_owned(),
                                     ),
-                                )
-                            } else {
-                                match tools.disk_usage.get(&status.tool) {
-                                    Some(Ok(Some(bytes))) => (
-                                        true,
-                                        format!("Disk: ~{}", format_disk_size(*bytes)),
-                                        Some(
-                                            "Molchanica-managed files only; upstream model caches \
-                                             outside Molchanica's data directory are excluded."
-                                                .to_owned(),
-                                        ),
-                                    ),
-                                    Some(Ok(None)) => (
-                                        false,
-                                        "Disk: no managed files".to_owned(),
-                                        Some(
-                                            "The tool was found, but it is not installed in \
+                                ),
+                                Some(Ok(None)) => (
+                                    false,
+                                    "Disk: no managed files".to_owned(),
+                                    Some(
+                                        "The tool was found, but it is not installed in \
                                              Molchanica's managed data directory."
-                                                .to_owned(),
-                                        ),
+                                            .to_owned(),
                                     ),
-                                    Some(Err(error)) => (
-                                        true,
-                                        "Disk: unavailable".to_owned(),
-                                        Some(error.clone()),
-                                    ),
-                                    None => (false, "Disk: calculating…".to_owned(), None),
+                                ),
+                                Some(Err(error)) => {
+                                    (true, "Disk: unavailable".to_owned(), Some(error.clone()))
                                 }
-                            };
+                                None => (false, "Disk: calculating…".to_owned(), None),
+                            }
+                        };
 
                         let button_text = if confirming {
                             "Confirm uninstall"
@@ -789,11 +780,9 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                         CheckResult::CantFind => {
                             if !spec.is_supported() {
                                 ui.label(
-                                    RichText::new(
-                                        "Linux only — installation is unavailable on this platform.",
-                                    )
-                                    .color(COLOR_INACTIVE)
-                                    .small(),
+                                    RichText::new("Installation is unavailable on this platform.")
+                                        .color(COLOR_INACTIVE)
+                                        .small(),
                                 );
                             } else {
                                 let place = queue.place(status.tool);
@@ -868,12 +857,9 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                             );
                         }
                         ui.label(
-                            RichText::new(format!(
-                                "Override with {}",
-                                spec.exe_override_env
-                            ))
-                            .color(COLOR_INACTIVE)
-                            .small(),
+                            RichText::new(format!("Override with {}", spec.exe_override_env))
+                                .color(COLOR_INACTIVE)
+                                .small(),
                         );
                         if let Some(name) = spec.root_override_env {
                             ui.label(

@@ -12,12 +12,49 @@ use std::{
 
 use bio_files::{MmCif, Sdf, SdfFormat, fasta::Fasta};
 use chrono::Utc;
-use mol_defs::molecules::{MolGenericRef, MolIdent, MolType, small::MoleculeSmall};
+use mol_defs::molecules::{
+    MolGenericRef, MolIdent, MolType, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
+};
 use na_seq::Sequence;
 use serde::{Deserialize, Serialize};
 
+use crate::project::SavedResidue;
+
 const MANAGED_MOLS_DIR: &str = "managed_molecules";
 const MANIFEST_FILE: &str = "manifest.json";
+const NUCLEIC_ACID_RESIDUES: &str = "nucleic_acid_residues";
+
+#[derive(Deserialize, Serialize)]
+struct NucleicAcidResidues {
+    residues: Vec<SavedResidue>,
+    second_strand_start: Option<usize>,
+}
+
+pub(super) fn restore_nucleic_acid_residues(mol: &mut MoleculeNucleicAcid) -> io::Result<()> {
+    let Some(data) = mol.common.metadata.remove(NUCLEIC_ACID_RESIDUES) else {
+        return Ok(());
+    };
+
+    let stored: NucleicAcidResidues = serde_json::from_str(&data)?;
+    let atoms = &mut mol.common.atoms;
+    mol.residues = stored
+        .residues
+        .into_iter()
+        .map(|r| r.restore(atoms, MolType::NucleicAcid))
+        .collect::<io::Result<_>>()?;
+
+    for (i, residue) in mol.residues.iter().enumerate() {
+        for &a in &residue.atoms {
+            atoms[a].residue = Some(i);
+            atoms[a].chain = Some(usize::from(
+                stored.second_strand_start.is_some_and(|s| a >= s),
+            ));
+            atoms[a].hetero = false;
+        }
+    }
+
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ManagedMolProvider {
@@ -412,11 +449,21 @@ pub(crate) fn store_created(
         }
         _ => {
             // As `MolGenericRef::to_mol2` does for pockets.
-            let mol2 = MoleculeSmall {
+            let mut mol2 = MoleculeSmall {
                 common: mol.common().clone(),
                 ..Default::default()
             }
             .to_mol2();
+            if let MolGenericRef::NucleicAcid(m) = mol {
+                let stored = NucleicAcidResidues {
+                    residues: m.residues.iter().map(SavedResidue::capture).collect(),
+                    second_strand_start: m.common.atoms.iter().position(|a| a.chain == Some(1)),
+                };
+                mol2.metadata.insert(
+                    NUCLEIC_ACID_RESIDUES.to_owned(),
+                    serde_json::to_string(&stored)?,
+                );
+            }
             write_atomically(&main_path, |path| mol2.save(path))?;
         }
     }

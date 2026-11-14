@@ -7,7 +7,7 @@ use egui::{
     Sense, Slider, Stroke, TextEdit, Ui,
 };
 use graphics::{ControlScheme, EngineUpdates, Scene};
-use mol_defs::molecules::MolType;
+use mol_defs::molecules::{MolGenericRef, MolType};
 use panels::{
     md::md_setup,
     mol_data,
@@ -407,8 +407,10 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
 
     let residue_navigation = state.ui.view_sel_level == ViewSelLevel::Residue
         && matches!(state.volatile.active_mol, Some((MolType::Peptide, _)));
+    let nucleic_residues = state.ui.view_sel_level == ViewSelLevel::Residue
+        && matches!(state.active_mol(), Some(MolGenericRef::NucleicAcid(m)) if !m.residues.is_empty());
 
-    let (btn_text_p, btn_text_n) = if active_seq.is_some() {
+    let (btn_text_p, btn_text_n) = if active_seq.is_some() || nucleic_residues {
         ("Prev residue", "Next residue")
     } else if residue_navigation {
         ("Prev AA", "Next AA")
@@ -489,8 +491,9 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
     }
 }
 
-fn res_coloring_text(coloring: ResColoring) -> &'static str {
+fn res_coloring_text(coloring: ResColoring, nucleic: bool) -> &'static str {
     match coloring {
+        ResColoring::AminoAcid if nucleic => "Base",
         ResColoring::AminoAcid => "AA",
         ResColoring::Position => "Posit",
         ResColoring::Hydrophobicity => "Hydro",
@@ -534,18 +537,37 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
         ViewSelLevel::AtomBond => (),
         ViewSelLevel::Residue => {
             let prev = state.ui.res_coloring;
+            let nucleic = matches!(state.volatile.active_mol, Some((MolType::NucleicAcid, _)));
+            let options: &[ResColoring] = if nucleic {
+                &[
+                    ResColoring::AminoAcid,
+                    ResColoring::Position,
+                    ResColoring::Chain,
+                ]
+            } else {
+                &[
+                    ResColoring::AminoAcid,
+                    ResColoring::Position,
+                    ResColoring::Hydrophobicity,
+                    ResColoring::SiftsUniprot,
+                    ResColoring::Chain,
+                ]
+            };
+            let displayed = if options.contains(&prev) {
+                prev
+            } else {
+                ResColoring::Position
+            };
             ComboBox::from_id_salt(11)
                 .width(40.)
-                .selected_text(res_coloring_text(state.ui.res_coloring))
+                .selected_text(res_coloring_text(displayed, nucleic))
                 .show_ui(ui, |ui| {
-                    for v in [
-                        ResColoring::AminoAcid,
-                        ResColoring::Position,
-                        ResColoring::Hydrophobicity,
-                        ResColoring::SiftsUniprot,
-                        ResColoring::Chain,
-                    ] {
-                        ui.selectable_value(&mut state.ui.res_coloring, v, res_coloring_text(v));
+                    for &v in options {
+                        ui.selectable_value(
+                            &mut state.ui.res_coloring,
+                            v,
+                            res_coloring_text(v, nucleic),
+                        );
                     }
                 });
 

@@ -9,6 +9,7 @@ use mol_defs::molecules::{Atom, AtomRole, MolGenericRef, MolType, Residue};
 use na_seq::Element;
 
 use crate::{
+    nucleic_acid_creation::is_backbone_atom,
     selection::{MoleculeAtoms, Selection},
     state::State,
 };
@@ -538,39 +539,8 @@ fn polymer_backbone(atom: &Atom, protein: bool, nucleic: bool) -> bool {
     if protein {
         return atom.is_backbone() || matches!(name.as_str(), "N" | "CA" | "C" | "O" | "OXT" | "H");
     }
-    nucleic
-        && matches!(
-            name.replace('*', "'").as_str(),
-            "P" | "OP1"
-                | "OP2"
-                | "OP3"
-                | "O1P"
-                | "O2P"
-                | "O3P"
-                | "C1'"
-                | "C2'"
-                | "O2'"
-                | "C3'"
-                | "O3'"
-                | "C4'"
-                | "O4'"
-                | "C5'"
-                | "O5'"
-                | "H1'"
-                | "H3'"
-                | "H4'"
-                | "H2'"
-                | "H2''"
-                | "H12'"
-                | "H22'"
-                | "H5'"
-                | "H5''"
-                | "H15'"
-                | "H25'"
-                | "HO2'"
-                | "HO3'"
-                | "HO5'"
-        )
+
+    nucleic && is_backbone_atom(&name)
 }
 
 pub(crate) fn residue_name(residue: &Residue) -> String {
@@ -667,6 +637,11 @@ impl Context<'_> {
                 .chain
                 .and_then(|c| p.chains.get(c))
                 .map_or("", |c| &c.id),
+            MolGenericRef::NucleicAcid(_) => match mol.common().atoms[a].chain {
+                Some(0) => "A",
+                Some(1) => "B",
+                _ => "",
+            },
             _ => "",
         }
     }
@@ -1340,6 +1315,7 @@ pub fn current_atoms(state: &State) -> Vec<MoleculeAtoms> {
         BondsLig((i, b)) => (MolType::Ligand, *i, vec![], b.clone(), vec![]),
         AtomNucleicAcid((i, a)) => (MolType::NucleicAcid, *i, vec![*a], vec![], vec![]),
         BondNucleicAcid((i, b)) => (MolType::NucleicAcid, *i, vec![], vec![*b], vec![]),
+        ResiduesNucleicAcid((i, r)) => (MolType::NucleicAcid, *i, vec![], vec![], r.clone()),
         AtomLipid((i, a)) => (MolType::Lipid, *i, vec![*a], vec![], vec![]),
         BondLipid((i, b)) => (MolType::Lipid, *i, vec![], vec![*b], vec![]),
         AtomPocket((i, a)) => (MolType::Pocket, *i, vec![*a], vec![], vec![]),
@@ -1355,14 +1331,17 @@ pub fn current_atoms(state: &State) -> Vec<MoleculeAtoms> {
             .filter_map(|b| mol.common().bonds.get(*b))
             .flat_map(|b| [b.atom_0, b.atom_1]),
     );
-    if let MolGenericRef::Peptide(p) = mol {
-        atoms.extend(
-            residues
-                .iter()
-                .filter_map(|r| p.residues.get(*r))
-                .flat_map(|r| r.atoms.iter().copied()),
-        );
-    }
+    let molecule_residues = match mol {
+        MolGenericRef::Peptide(p) => &p.residues[..],
+        MolGenericRef::NucleicAcid(m) => &m.residues[..],
+        _ => &[],
+    };
+    atoms.extend(
+        residues
+            .iter()
+            .filter_map(|r| molecule_residues.get(*r))
+            .flat_map(|r| r.atoms.iter().copied()),
+    );
     atoms.sort_unstable();
     atoms.dedup();
     vec![MoleculeAtoms {

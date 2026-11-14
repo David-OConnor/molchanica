@@ -15,7 +15,9 @@ use crate::{
     file_io::{save_mol, sequence::save_seq_dialog},
     label,
     md::{
-        trajectory::{MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj},
+        trajectory::{
+            MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj, unload_traj,
+        },
         viewer,
         viewer::ViewerMolSet,
     },
@@ -841,6 +843,7 @@ fn traj_items(
     ui.separator();
 
     let mut close = None;
+    let mut unload = None;
     let mut snaps_loaded = false;
     let mut traj_active = None;
 
@@ -926,6 +929,19 @@ fn traj_items(
                     }
                 }
 
+                if traj.frames_open.is_some()
+                    && matches!(traj.source, TrajectorySource::File(_))
+                    && button!(
+                        ui,
+                        "Unload",
+                        COLOR_ACTION,
+                        "Free the loaded frames from memory. Keeps the trajectory open."
+                    )
+                    .clicked()
+                {
+                    unload = Some(i);
+                }
+
                 if ui
                     .button(RichText::new("❌").color(COLOR_REMOVE))
                     .on_hover_text("Close this trajectory.")
@@ -977,6 +993,10 @@ fn traj_items(
     }
 
     ui.separator();
+
+    if let Some(i) = unload {
+        unload_traj(state, i, scene, redraw, updates);
+    }
 
     if let Some(i) = close {
         close_traj(state, i, scene, redraw, updates);

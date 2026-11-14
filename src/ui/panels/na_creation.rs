@@ -1,42 +1,122 @@
-use egui::{Color32, ComboBox, RichText, TextEdit, Ui};
+use egui::{
+    Color32, ComboBox, Resize, RichText, ScrollArea, TextBuffer, TextEdit, TextStyle, Ui,
+    text::{LayoutJob, TextFormat},
+};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{
     MolGenericRef, MolType, MoleculeGeneric,
     nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType, Strands},
 };
-use na_seq::{
-    Nucleotide::{self, *},
-    seq_from_str, seq_to_str_upper,
-};
+use na_seq::Nucleotide::{self, *};
 
 use crate::{
     cam::move_cam_to_mol_front,
     file_io::managed_mols,
+    nucleic_acid_creation::{ResidueGrouping, base_color, base_letter, group_residues, nucleotide},
     state::State,
     ui::{
-        COLOR_ACTION, misc::section_box, panels::aa_creation::SEQ_INPUT_WIDTH,
+        COLOR_ACTION, ROW_SPACING,
+        misc::{section_box, selector},
         util::report_cache_result,
     },
     util::handle_err,
 };
 
-/// Sanger chromatogram colors, lightened for a dark background. These match PlasCAD's.
-fn nt_color(nt: Nucleotide) -> Color32 {
-    match nt {
-        A => Color32::from_rgb(20, 220, 20),
-        C => Color32::from_rgb(130, 130, 255),
-        T => Color32::from_rgb(255, 100, 100),
-        G => Color32::from_rgb(200, 200, 200),
-    }
-}
-
-fn nt_name(nt: Nucleotide) -> &'static str {
+fn nt_name(nt: Nucleotide, na_type: NucleicAcidType) -> &'static str {
     match nt {
         A => "adenine",
         C => "cytosine",
+        T if na_type == NucleicAcidType::Rna => "uracil",
         T => "thymine",
         G => "guanine",
     }
+}
+
+fn sequence_input(ui: &mut Ui, text: &mut String, na_type: NucleicAcidType, max_width: f32) {
+    let help = "Enter a nucleotide sequence. Drag the lower-right corner to resize.";
+    let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
+        let font_id = TextStyle::Monospace.resolve(ui.style());
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = wrap_width;
+
+        for ch in text.as_str().chars() {
+            let color = nucleotide(ch, na_type).map_or(Color32::from_rgb(255, 165, 0), base_color);
+            job.append(
+                ch.encode_utf8(&mut [0; 4]),
+                0.,
+                TextFormat {
+                    font_id: font_id.clone(),
+                    color,
+                    ..Default::default()
+                },
+            );
+        }
+
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    };
+
+    ui.label("Seq").on_hover_text(help);
+    ui.vertical(|ui| {
+        Resize::default()
+            .id_salt("na_sequence_size")
+            .default_size([600., 52.])
+            .min_size([120., 38.])
+            .max_width(max_width)
+            .max_height((ui.ctx().content_rect().height() * 0.5).max(52.))
+            .with_stroke(false)
+            .show(ui, |ui| {
+                // Keep the corner handle below the editor.
+                let height = (ui.available_height() - ui.visuals().resize_corner_size).max(1.);
+                ScrollArea::vertical()
+                    .max_height(height)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.add(
+                            TextEdit::multiline(text)
+                                .font(TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(1)
+                                .min_size([0., height].into())
+                                .layouter(&mut layouter),
+                        )
+                        .on_hover_text(help);
+                    });
+            });
+    });
+}
+
+fn grouping_options(ui: &mut Ui, grouping: &mut ResidueGrouping) {
+    use ResidueGrouping::*;
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Residues");
+        let options = [
+            (
+                Nucleotide,
+                "Per nt",
+                "Each base and its backbone form a residue.",
+            ),
+            (
+                BasePair,
+                "Per bp",
+                "Both nucleotides of a pair form one residue.",
+            ),
+            (
+                BasesAndBackbones,
+                "Paired bases / bbs",
+                "The paired bases form one residue and their backbones form another.",
+            ),
+            (
+                BaseAndBackbone,
+                "Separate bases / bbs",
+                "Each base and each backbone form separate residues.",
+            ),
+        ];
+
+        if let Some(selected) = selector(ui, *grouping, &options) {
+            *grouping = selected;
+        }
+    });
 }
 
 /// Add and manage nucleic acids
@@ -48,34 +128,36 @@ pub(in crate::ui) fn na_section(
 ) {
     section_box().show(ui, |ui| {
         ui.vertical(|ui| {
+            let na_type = state.to_save.nucleic_acid.na_type;
+            let max_width = (ui.ctx().content_rect().width() - 210.).max(120.);
             ui.horizontal(|ui| {
-                let help_text =
-                    "Enter the nucleotide sequence of the DNA or RNA molecule to create";
-
-                ui.label("Seq").on_hover_text(help_text);
-
-                ui.add(
-                    TextEdit::multiline(&mut state.to_save.nucleic_acid.seq_to_create)
-                        .desired_width(SEQ_INPUT_WIDTH)
-                        .desired_rows(2),
-                )
-                .on_hover_text(help_text);
+                sequence_input(
+                    ui,
+                    &mut state.to_save.nucleic_acid.seq_to_create,
+                    na_type,
+                    max_width,
+                );
 
                 for nt in [A, C, G, T] {
-                    let letter = nt.to_str_upper();
+                    let letter = base_letter(nt, na_type);
 
                     if ui
-                        .button(RichText::new(&letter).color(nt_color(nt)))
+                        .button(RichText::new(letter.to_string()).color(base_color(nt)))
                         .on_hover_text(format!(
                             "Add {letter} ({}) to the end of the sequence",
-                            nt_name(nt)
+                            nt_name(nt, na_type)
                         ))
                         .clicked()
                     {
-                        state.to_save.nucleic_acid.seq_to_create.push_str(&letter);
+                        state.to_save.nucleic_acid.seq_to_create.push(letter);
                     }
                 }
+            });
 
+            grouping_options(ui, &mut state.ui.na_residue_grouping);
+            ui.add_space(ROW_SPACING);
+
+            ui.horizontal(|ui| {
                 ComboBox::from_id_salt(12443)
                     .width(80.)
                     .selected_text(state.to_save.nucleic_acid.na_type.to_string())
@@ -93,8 +175,6 @@ pub(in crate::ui) fn na_section(
                     .width(80.)
                     .selected_text(state.to_save.nucleic_acid.strands.to_string())
                     .show_ui(ui, |ui| {
-                        // todo: Temp SS only until we sort out strand alignment
-                        // for v in &[Strands::Single] {
                         for v in &[Strands::Single, Strands::Double] {
                             ui.selectable_value(
                                 &mut state.to_save.nucleic_acid.strands,
@@ -108,12 +188,25 @@ pub(in crate::ui) fn na_section(
                     .button(RichText::new("Create").color(COLOR_ACTION))
                     .clicked()
                 {
-                    // todo: Handle RNA U.
-                    let seq = seq_from_str(&state.to_save.nucleic_acid.seq_to_create);
+                    let na_type = state.to_save.nucleic_acid.na_type;
+                    let seq: Vec<_> = state
+                        .to_save
+                        .nucleic_acid
+                        .seq_to_create
+                        .chars()
+                        .filter_map(|ch| nucleotide(ch, na_type))
+                        .collect();
+                    if seq.is_empty() {
+                        handle_err(
+                            &mut state.ui,
+                            "Enter a nucleotide sequence first".to_owned(),
+                        );
+                        return;
+                    }
 
-                    let mol = match MoleculeNucleicAcid::from_seq(
+                    let mut mol = match MoleculeNucleicAcid::from_seq(
                         &seq,
-                        state.to_save.nucleic_acid.na_type,
+                        na_type,
                         state.to_save.nucleic_acid.strands,
                         &state.templates.dna,
                         &state.templates.rna,
@@ -127,12 +220,14 @@ pub(in crate::ui) fn na_section(
                             return;
                         }
                     };
+                    group_residues(&mut mol, state.ui.na_residue_grouping);
+                    let query: String = seq.iter().map(|&nt| base_letter(nt, na_type)).collect();
 
                     // Kept in a managed file, so it reopens next session; as for a download.
                     let result = managed_mols::store_created(
                         &state.volatile.prefs_dir,
                         MolGenericRef::NucleicAcid(&mol),
-                        &seq_to_str_upper(&seq),
+                        &query,
                     );
                     let path = report_cache_result(state, result);
 

@@ -26,8 +26,7 @@ use crate::{
 
 /// The amino acid buttons wrap at this width.
 const SECTION_WIDTH: f32 = 800.;
-/// Shared with the nucleic acid panel.
-pub(in crate::ui) const SEQ_INPUT_WIDTH: f32 = 400.;
+const SEQ_INPUT_WIDTH: f32 = 400.;
 
 /// Parse the single-letter amino acid codes entered. Whitespace, digits and gaps are ignored.
 fn parse_seq(text: &str) -> Result<Vec<AminoAcid>, String> {

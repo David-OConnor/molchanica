@@ -707,9 +707,9 @@ fn handle_physical_key(
                             | Selection::Residue(_)
                             | Selection::BondPeptide(_) => redraw.peptide = true,
                             Selection::AtomLig(_) | Selection::BondLig(_) => redraw.ligand = true,
-                            Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => {
-                                redraw.na = true
-                            }
+                            Selection::AtomNucleicAcid(_)
+                            | Selection::BondNucleicAcid(_)
+                            | Selection::ResiduesNucleicAcid(_) => redraw.na = true,
                             Selection::AtomLipid(_) | Selection::BondLipid(_) => {
                                 redraw.lipid = true
                             }
@@ -731,9 +731,9 @@ fn handle_physical_key(
                             | Selection::Residue(_)
                             | Selection::BondPeptide(_) => redraw.peptide = true,
                             Selection::AtomLig(_) | Selection::BondLig(_) => redraw.ligand = true,
-                            Selection::AtomNucleicAcid(_) | Selection::BondNucleicAcid(_) => {
-                                redraw.na = true
-                            }
+                            Selection::AtomNucleicAcid(_)
+                            | Selection::BondNucleicAcid(_)
+                            | Selection::ResiduesNucleicAcid(_) => redraw.na = true,
                             Selection::AtomLipid(_) | Selection::BondLipid(_) => {
                                 redraw.lipid = true
                             }
