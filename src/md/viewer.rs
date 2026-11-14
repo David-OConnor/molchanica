@@ -268,6 +268,35 @@ impl SnapshotViewer {
         self.get_snap(i)
     }
 
+    /// The active snapshot if it has energy data; otherwise the nearest one that does. Some engines
+    /// (e.g. GROMACS) only write energy on some frames.
+    pub fn get_nearest_energy_snap(&self) -> Option<&Snapshot> {
+        let i = self.current_snapshot?;
+        let n = self.snapshots.len();
+
+        if i >= n {
+            return None;
+        }
+
+        let has_energy = |j: usize| self.snapshots[j].energy_data.is_some();
+
+        for d in 0..n {
+            if d > i && i + d >= n {
+                break;
+            }
+
+            if d <= i && has_energy(i - d) {
+                return self.get_snap(i - d);
+            }
+
+            if d > 0 && i + d < n && has_energy(i + d) {
+                return self.get_snap(i + d);
+            }
+        }
+
+        None
+    }
+
     pub fn get_snap(&self, i: usize) -> Option<&Snapshot> {
         self.snapshots.get(i).map(Arc::as_ref)
     }

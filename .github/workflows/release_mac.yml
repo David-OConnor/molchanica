@@ -65,6 +65,20 @@ jobs:
       - name: Remove private deps
         run: sed -i '' -E '/^(adme|synthesis)[[:space:]]*=.*path/d' Cargo.toml
 
+      # Unpublished deps that `[patch.crates-io]` points to, cloned to the same relative paths as
+      # locally. Builds their pushed `main`, not local working trees.
+      - name: Fetch local deps
+        run: |
+          clone() { git clone --depth 1 "https://github.com/David-OConnor/$1" "$2"; }
+
+          clone bio_files ../bio_files
+          clone dynamics ../dynamics
+          clone mol_defs ../mol_defs
+          clone ewald ../ewald
+          clone Bio-tools ../bio_tools
+          clone graphics ../../graphics
+          clone lin_alg ../../lin_alg
+
       # No CUDA on macOS.
       - name: Build
         run: cargo build --release --no-default-features --target ${{ matrix.target }}

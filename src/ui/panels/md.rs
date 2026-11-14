@@ -336,7 +336,7 @@ pub fn md_setup(
             super::md_gromacs::setup(state, ui);
         }
 
-        if let Some(ss) = state.volatile.md_local.viewer.get_active_snap() {
+        if let Some(ss) = state.volatile.md_local.viewer.get_nearest_energy_snap() {
             ui.add_space(ROW_SPACING / 2.);
 
             ui.horizontal_wrapped(|ui| {

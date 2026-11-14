@@ -874,9 +874,9 @@ fn traj_items(
                 }
 
                 // todo: Allow end and start to be unbounded in UI, setting their val to None.
-                num_field(&mut traj.ui_start_i, "", 44, ui);
+                num_field(&mut traj.ui_start_i, "", 60, ui);
                 ui.label("-");
-                num_field(&mut traj.ui_end_i, "", 44, ui);
+                num_field(&mut traj.ui_end_i, "", 60, ui);
                 num_field(&mut traj.ui_step, "step", 28, ui);
 
                 let n_load = traj.ui_frames_selected();
