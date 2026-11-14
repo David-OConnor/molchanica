@@ -63,13 +63,12 @@ pub struct MdStateLocal {
     pub start: Option<Instant>,
     pub run_steps_and_dt: (u32, f32),
     pub run_output_dir: Option<std::path::PathBuf>,
-    /// Cached so we don't compute each UI paint. Picoseconds.
-    pub run_time: f32,
     // todo: Consider if you want a dedicated MD playback operating mode. For now, this flag
     /// If true, render the molecules from this struct, instead of primary state molecules.
     pub draw_md_mols: bool,
     pub gromacs_output: Option<GromacsOutput>,
     pub gromacs_setup: gromacs::Setup,
+    pub xtb_options: bio_files::xtb::XtbMdOptions,
     pub opened_inputs: Option<runs::RunInputs>,
     pub viewer: SnapshotViewer,
     // todo: putting back for now

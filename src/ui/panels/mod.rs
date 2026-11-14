@@ -9,6 +9,7 @@ pub(super) mod lipid_creation;
 pub mod md;
 mod md_gromacs;
 pub mod md_viewer;
+mod md_xtb;
 pub mod mol_data;
 pub(super) mod na_creation;
 pub mod orca;

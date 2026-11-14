@@ -674,17 +674,20 @@ fn prepare_generated_run(
         .mdp
         .clone()
         .unwrap_or_else(|| generated_mdp(&state.to_save.md));
-    if mdp_value(&mdp, "continuation").is_some_and(|v| v.eq_ignore_ascii_case("yes"))
-        || mdp_value(&mdp, "integrator").is_some_and(|v| {
-            ["steep", "cg", "l-bfgs", "nm", "tpi", "tpic"]
-                .iter()
-                .any(|name| v.eq_ignore_ascii_case(name))
-        })
-    {
+    if !can_relax(&mdp) {
         input.minimize_energy = false;
     }
 
     Ok((input, mdp, viewer_mols))
+}
+
+pub(crate) fn can_relax(mdp: &str) -> bool {
+    !mdp_value(mdp, "continuation").is_some_and(|v| v.eq_ignore_ascii_case("yes"))
+        && !mdp_value(mdp, "integrator").is_some_and(|v| {
+            ["steep", "cg", "l-bfgs", "nm", "tpi", "tpic"]
+                .iter()
+                .any(|name| v.eq_ignore_ascii_case(name))
+        })
 }
 
 pub fn launch_md(state: &mut State) {

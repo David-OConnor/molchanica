@@ -34,6 +34,8 @@ use crate::{
 
 type ViewerMols = Vec<(FfMolType, MoleculeCommon, usize)>;
 
+pub(crate) const DEFAULT_FRAME_INTERVAL: usize = 10;
+
 struct PreparedInput {
     input: XtbInput,
     mols: ViewerMols,
@@ -177,6 +179,15 @@ fn prepare_input(state: &State) -> io::Result<PreparedInput> {
     })
 }
 
+pub(crate) fn thermostat_enabled(integrator: &Integrator) -> bool {
+    match integrator {
+        Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
+            thermostat.is_some()
+        }
+        Integrator::LangevinMiddle { .. } => true,
+    }
+}
+
 fn native_input(state: &State, atoms: Vec<bio_files::AtomGeneric>) -> io::Result<XtbInput> {
     let set = state
         .selected_force_field()
@@ -185,26 +196,17 @@ fn native_input(state: &State, atoms: Vec<bio_files::AtomGeneric>) -> io::Result
     let cfg = &state.to_save.md.config;
     set.validate_config(cfg)
         .map_err(|e| io::Error::other(e.to_string()))?;
-    if state.ui.md.alchemical_enabled {
-        return Err(io::Error::other(
-            "Native xTB does not support alchemical windows.",
-        ));
-    }
-
     let charge = set.charge().map_err(|e| io::Error::other(e.to_string()))?;
-    let thermostat = match cfg.integrator {
-        Integrator::Leapfrog { thermostat } | Integrator::VerletVelocity { thermostat } => {
-            thermostat.is_some()
-        }
-        Integrator::LangevinMiddle { .. } => true,
-    };
     let input = XtbInput {
         atoms,
         dt: state.to_save.md.dt as f64,
         num_steps: state.to_save.md.num_steps as usize,
         temperature: cfg.temp_target as f64,
-        thermostat,
-        output_interval: cfg.snapshot_handlers.memory.unwrap_or(10),
+        thermostat: thermostat_enabled(&cfg.integrator),
+        output_interval: cfg
+            .snapshot_handlers
+            .memory
+            .unwrap_or(DEFAULT_FRAME_INTERVAL),
         relaxation_iters: cfg.max_init_relaxation_iters,
         charge,
         alpb_solvent: set
@@ -216,7 +218,7 @@ fn native_input(state: &State, atoms: Vec<bio_files::AtomGeneric>) -> io::Result
         executable: set.executable.clone(),
         timeout: None,
     };
-    input.validate()?;
+    input.validate_with_options(&state.volatile.md_local.xtb_options)?;
 
     Ok(input)
 }
@@ -238,7 +240,9 @@ fn prepare_run(state: &State) -> io::Result<PreparedInput> {
 }
 
 pub fn save_input_files(state: &State, path: &Path) -> io::Result<()> {
-    prepare_run(state)?.input.save(path)
+    prepare_run(state)?
+        .input
+        .save_with_options(path, &state.volatile.md_local.xtb_options)
 }
 
 pub fn launch_md(state: &mut State) {
@@ -256,6 +260,7 @@ pub fn launch_md(state: &mut State) {
             return;
         }
     };
+    let options = state.volatile.md_local.xtb_options.clone();
     let (tx, receiver) = mpsc::channel();
     let cancel = Arc::new(AtomicBool::new(false));
     let worker_cancel = cancel.clone();
@@ -273,7 +278,7 @@ pub fn launch_md(state: &mut State) {
         let start = Instant::now();
         let result = prepared
             .input
-            .run_with_cancel(&worker_cancel)
+            .run_with_options(&options, &worker_cancel)
             .map(|output| {
                 let mols: Vec<_> = prepared
                     .mols

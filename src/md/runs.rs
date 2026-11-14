@@ -8,6 +8,7 @@ use std::{
 use bio_files::{
     AtomGeneric, FrameSlice,
     gromacs::{GromacsTopology, MdpParams, OutputEnergy, gro::Gro},
+    xtb::{MD_RESTART_INPUT, XtbMdOptions, XtbOptimizer, read_trajectory_with_velocities},
     xyz::Xyz,
 };
 use dynamics::{ForceFieldFamily, Integrator, MdConfig, snapshot::Snapshot};
@@ -209,7 +210,13 @@ struct LoadedRun {
     config: Option<(MdConfig, u32, f32)>,
     inputs: Option<RunInputs>,
     native_inputs: Option<MdInputs>,
-    xtb_options: Option<(Option<f64>, Option<String>)>,
+    xtb_options: Option<XtbSettings>,
+}
+
+struct XtbSettings {
+    charge: Option<f64>,
+    solvent: Option<String>,
+    options: XtbMdOptions,
 }
 
 pub fn open(
@@ -714,10 +721,11 @@ pub(crate) fn gromacs_config(mdp: &MdpParams) -> MdConfig {
 }
 
 fn load_xtb(dir: &Path) -> io::Result<LoadedRun> {
-    let (cfg, steps, dt, has_settings) = xtb_config(dir)?;
+    let (cfg, steps, dt, settings) = xtb_config(dir)?;
     let interval = cfg.snapshot_handlers.memory.unwrap_or(1) as f64 * f64::from(dt);
     let path = dir.join("xtb.trj");
-    let frames = bio_files::xtb::read_trajectory(&path, interval)?;
+    let velocities = settings.as_ref().is_some_and(|set| set.options.velocities);
+    let frames = read_trajectory_with_velocities(&path, interval, velocities)?;
     let first = frames
         .first()
         .ok_or_else(|| io::Error::other("The xTB trajectory is empty."))?;
@@ -794,51 +802,38 @@ fn load_xtb(dir: &Path) -> io::Result<LoadedRun> {
     let snapshots = crate::xtb::trajectory_snapshots(frames);
     let mut trajectory = Trajectory::new_in_memory(snapshots.clone(), name, dt);
     trajectory.ui_active = true;
-    let inputs = geometry.filter(|_| has_settings).map(|xyz| RunInputs::Xtb {
-        geometry: xyz.atoms,
-        mols: mol_set
-            .mols
-            .iter()
-            .map(|mol| {
-                let kind = match mol.mol_type {
-                    MolType::Peptide => dynamics::FfMolType::Peptide,
-                    MolType::NucleicAcid => dynamics::FfMolType::Dna,
-                    MolType::Lipid => dynamics::FfMolType::Lipid,
-                    _ => dynamics::FfMolType::SmallOrganic,
-                };
+    let inputs = geometry
+        .filter(|_| settings.is_some())
+        .map(|xyz| RunInputs::Xtb {
+            geometry: xyz.atoms,
+            mols: mol_set
+                .mols
+                .iter()
+                .map(|mol| {
+                    let kind = match mol.mol_type {
+                        MolType::Peptide => dynamics::FfMolType::Peptide,
+                        MolType::NucleicAcid => dynamics::FfMolType::Dna,
+                        MolType::Lipid => dynamics::FfMolType::Lipid,
+                        _ => dynamics::FfMolType::SmallOrganic,
+                    };
 
-                (kind, mol.mol.clone(), 1)
-            })
-            .collect(),
-    });
-    let cmd = fs::read_to_string(dir.join("command.txt")).unwrap_or_default();
-    let arg = |name| {
-        cmd.split_whitespace()
-            .zip(cmd.split_whitespace().skip(1))
-            .find_map(|(option, value)| (option == name).then_some(value))
-    };
-    let charge = arg("--chrg").and_then(|s| s.parse().ok()).or_else(|| {
-        fs::read_to_string(dir.join(".CHRG"))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()
-    });
-    let xtb_options = (charge, arg("--alpb").map(str::to_owned));
-
+                    (kind, mol.mol.clone(), 1)
+                })
+                .collect(),
+        });
     Ok(LoadedRun {
         backend: MdBackend::xTb,
         trajectory,
         snapshots,
         mol_set,
-        config: has_settings.then_some((cfg, steps, dt)),
+        config: settings.is_some().then_some((cfg, steps, dt)),
         inputs,
         native_inputs: None,
-        xtb_options: has_settings.then_some(xtb_options),
+        xtb_options: settings,
     })
 }
 
-fn xtb_config(dir: &Path) -> io::Result<(MdConfig, u32, f32, bool)> {
+fn xtb_config(dir: &Path) -> io::Result<(MdConfig, u32, f32, Option<XtbSettings>)> {
     let path = named(dir, &["md.inp", "xcontrol"])
         .or_else(|| files(dir).into_iter().find(|path| extension(path, "inp")));
     let has_settings = path.is_some();
@@ -848,17 +843,40 @@ fn xtb_config(dir: &Path) -> io::Result<(MdConfig, u32, f32, bool)> {
         .unwrap_or_default();
     let mut section = "";
     let mut settings = std::collections::HashMap::new();
+    let mut options = XtbMdOptions::default();
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or_default().trim();
         if line.starts_with('$') {
             section = line.split_whitespace().next().unwrap_or_default();
+        } else if matches!(section, "$constrain" | "$ffnb") && !line.is_empty() {
+            let body = if section == "$constrain" {
+                &mut options.restraints
+            } else {
+                &mut options.neighbors
+            };
+            body.push_str(line);
+            body.push('\n');
         } else if let Some((key, value)) = line.split_once('=') {
-            settings.insert((section, key.trim()), value.trim());
+            settings
+                .entry((section, key.trim()))
+                .or_insert(value.trim());
         }
     }
+    let cmd = fs::read_to_string(dir.join("command.txt")).unwrap_or_default();
+    let arg = |names: &[&str]| {
+        cmd.split_whitespace()
+            .zip(cmd.split_whitespace().skip(1))
+            .find_map(|(option, value)| names.contains(&option).then_some(value))
+    };
+    let flag = |name, default| {
+        settings.get(&("$md", name)).map_or(default, |v| {
+            matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes")
+        })
+    };
     let number = |key, default: f64| -> io::Result<f64> {
         match settings.get(&("$md", key)) {
             Some(value) => value
+                .replace(['D', 'd'], "E")
                 .parse::<f64>()
                 .ok()
                 .filter(|v| v.is_finite() && *v > 0.)
@@ -868,7 +886,10 @@ fn xtb_config(dir: &Path) -> io::Result<(MdConfig, u32, f32, bool)> {
     };
     let step = number("step", 0.5)?;
     let time = number("time", 50.)?;
-    let dump = number("dump", 50.)?;
+    let dump = ["dump", "dumpxyz", "dumptrj"]
+        .into_iter()
+        .find(|key| settings.contains_key(&("$md", key)))
+        .map_or(Ok(50.), |key| number(key, 50.))?;
     let dt = step / 1000.;
     let steps = (time / dt + 1e-7).floor();
     if steps > f64::from(u32::MAX) || steps < 1. {
@@ -876,18 +897,61 @@ fn xtb_config(dir: &Path) -> io::Result<(MdConfig, u32, f32, bool)> {
     }
     let mut cfg = MdConfig::for_family(ForceFieldFamily::Gfnn);
     cfg.temp_target = number("temp", 298.15)? as f32;
-    let nvt = settings
-        .get(&("$md", "nvt"))
-        .is_none_or(|v| !v.eq_ignore_ascii_case("false") && *v != "0");
+    let nvt = flag("nvt", true);
     cfg.integrator = Integrator::VerletVelocity {
         thermostat: nvt.then_some(dynamics::TAU_TEMP_DEFAULT),
     };
-    cfg.snapshot_handlers.memory = Some((dump / step).round().max(1.) as usize);
+    cfg.snapshot_handlers.memory = Some((dump / step + 1e-9).floor().max(1.) as usize);
     cfg.max_init_relaxation_iters = settings
         .get(&("$opt", "maxcycle"))
-        .and_then(|v| v.parse().ok());
+        .and_then(|v| v.parse().ok())
+        .or_else(|| cmd.split_whitespace().any(|v| v == "--omd").then_some(0));
 
-    Ok((cfg, steps as u32, dt as f32, has_settings))
+    options.hydrogen_mass = settings
+        .get(&("$md", "hmass"))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    options.shake = settings
+        .get(&("$md", "shake"))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    options.shake_print = flag("shakeprint", false);
+    options.velocities = flag("velo", false);
+    options.checkpoint_each_frame = flag("forcewrrestart", false);
+    options.coordinate_dump_fs = number("sdump", number("dumpcoord", options.coordinate_dump_fs)?)?;
+    if flag("restart", false) {
+        options.restart = named(dir, &[MD_RESTART_INPUT]);
+    }
+    options.threads = arg(&["--parallel", "-P"])
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    options.optimizer = match settings.get(&("$opt", "engine")).copied() {
+        Some("lbfgs" | "l-ancopt") => XtbOptimizer::Lbfgs,
+        Some("inertial" | "fire") => XtbOptimizer::Fire,
+        _ => XtbOptimizer::Ancopt,
+    };
+
+    let charge = arg(&["--chrg", "-c", "--charge"])
+        .and_then(|s| s.parse().ok())
+        .or_else(|| {
+            fs::read_to_string(dir.join(".CHRG"))
+                .ok()?
+                .trim()
+                .parse()
+                .ok()
+        });
+    let settings = XtbSettings {
+        charge,
+        solvent: arg(&["--alpb"]).map(str::to_owned),
+        options,
+    };
+
+    Ok((
+        cfg,
+        steps as u32,
+        dt as f32,
+        has_settings.then_some(settings),
+    ))
 }
 
 impl LoadedRun {
@@ -916,7 +980,6 @@ impl LoadedRun {
             state.to_save.md.num_steps = steps;
             state.to_save.md.dt = dt;
             state.ui.md.sync(&state.to_save.md.config, dt);
-            state.volatile.md_local.run_time = steps as f32 * dt;
         }
         if self.native_inputs.is_none() {
             state.ui.md.peptide_only_near_ligs = false;
@@ -926,18 +989,19 @@ impl LoadedRun {
         if let Some(saved) = self.native_inputs.take() {
             saved.apply(state, dir);
         }
-        if let Some((charge, solvent)) = self.xtb_options
-            && let Some(set) = state
+        if let Some(settings) = self.xtb_options {
+            state.volatile.md_local.xtb_options = settings.options;
+            if let Some(set) = state
                 .force_fields
                 .params
                 .as_mut()
                 .and_then(|p| p.gfnff_mut())
-        {
-            set.total_charge = charge;
-            set.alpb_solvent = solvent;
-            set.parameter_file = named(dir, &[".param_gfnff.xtb"]);
-            state.ui.md.alchemical_enabled = false;
-            state.force_fields.invalidate();
+            {
+                set.total_charge = settings.charge;
+                set.alpb_solvent = settings.solvent;
+                set.parameter_file = named(dir, &[".param_gfnff.xtb"]);
+                state.force_fields.invalidate();
+            }
         }
         let md = &mut state.volatile.md_local;
         md.opened_inputs = match self.inputs {

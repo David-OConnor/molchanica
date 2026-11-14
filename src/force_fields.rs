@@ -650,10 +650,9 @@ impl State {
             self.ui.ff_params.gfnff_job = None;
         }
 
-        if self.to_save.md.dt > 0.0005 {
+        if self.to_save.md.backend == MdBackend::Dynamics && self.to_save.md.dt > 0.0005 {
             self.to_save.md.dt = 0.0005;
             self.ui.md.dt_input = self.to_save.md.dt.to_string();
-            self.volatile.md_local.run_time = self.to_save.md.num_steps as f32 * self.to_save.md.dt;
         }
         if !matches!(
             self.to_save.md.backend,

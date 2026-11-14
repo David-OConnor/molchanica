@@ -200,7 +200,6 @@ fn main() {
 
     {
         // Set these UI strings for numerical values up after loading prefs
-        state.volatile.md_local.run_time = state.to_save.md.num_steps as f32 * state.to_save.md.dt;
         state.ui.ph_input = state.to_save.ph.to_string();
 
         state

@@ -6,11 +6,56 @@ use egui::{
 };
 
 use crate::{
-    gromacs::{InputFile, generated_mdp, mdp_field_value, mdp_value, set_mdp_value},
+    gromacs::{InputFile, can_relax, generated_mdp, mdp_field_value, mdp_value, set_mdp_value},
     state::State,
 };
 
 const MANUAL: &str = "https://manual.gromacs.org/2026.4/user-guide/mdp-options.html";
+
+pub(super) fn quick_settings(state: &mut State, ui: &mut Ui) {
+    let setup = &mut state.volatile.md_local.gromacs_setup;
+    let uses_files = setup.uses_files();
+    let mut draft = String::new();
+    let mdp = setup.mdp.as_mut().unwrap_or(&mut draft);
+
+    ui.push_id("gromacs_quick", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            run_length(ui, mdp);
+            super::md::relax_checkbox(
+                &mut state.to_save.md.config,
+                !uses_files && can_relax(mdp),
+                ui,
+            );
+
+            ui.label("TRR (steps)")
+                .on_hover_text("Save intervals. Use 0 to disable an output.");
+            for (key, label) in [("nstxout", "Pos"), ("nstvout", "Vel"), ("nstfout", "Force")] {
+                field(ui, mdp, key, label);
+            }
+            field(ui, mdp, "nstenergy", "Energy");
+            field(ui, mdp, "nstcalcenergy", "Calc energy");
+            field(ui, mdp, "nstxout-compressed", "XTC");
+        });
+        ui.horizontal_wrapped(|ui| {
+            integrator(ui, mdp);
+            constraints(ui, mdp);
+            field(ui, mdp, "ref-t", "Temp (K)");
+            field(ui, mdp, "ref-p", "Pressure (bar)");
+            field(ui, mdp, "rcoulomb", "Coulomb (nm)");
+            field(ui, mdp, "rvdw", "LJ (nm)");
+        });
+        ui.horizontal_wrapped(|ui| {
+            thermostat(ui, mdp);
+            field(ui, mdp, "tau-t", "Therm tau (ps)");
+            barostat(ui, mdp);
+            field(ui, mdp, "tau-p", "Baro tau (ps)");
+        });
+    });
+
+    if !draft.is_empty() {
+        setup.mdp = Some(draft);
+    }
+}
 
 pub(super) fn pick(state: &mut State, file: InputFile) {
     let dialogs = &mut state.volatile.dialogs;
@@ -173,48 +218,15 @@ fn command_args(ui: &mut Ui, name: &str, args: &mut String, help: &str) {
 
 fn edit_mdp(ui: &mut Ui, mdp: &mut String) {
     ui.horizontal_wrapped(|ui| {
-        option(
-            ui,
-            mdp,
-            "integrator",
-            &[
-                "md",
-                "md-vv",
-                "md-vv-avek",
-                "sd",
-                "bd",
-                "steep",
-                "cg",
-                "l-bfgs",
-                "nm",
-                "tpi",
-                "tpic",
-                "mimic",
-            ],
-        );
-        fields(ui, mdp, &["nsteps", "dt"]);
-        if let (Some(steps), Some(dt)) = (
-            mdp_value(mdp, "nsteps").and_then(|v| v.parse::<i64>().ok()),
-            mdp_value(mdp, "dt").and_then(|v| v.parse::<f64>().ok()),
-        ) {
-            if steps == -1 {
-                ui.label("Unlimited steps");
-            } else if steps >= 0 && dt.is_finite() && dt > 0. {
-                ui.label(format!("{:.3} ps", steps as f64 * dt));
-            }
-        }
+        integrator(ui, mdp);
+        run_length(ui, mdp);
     });
 
     CollapsingHeader::new("Run control and constraints").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             option(ui, mdp, "continuation", &["no", "yes"]);
             option(ui, mdp, "gen-vel", &["no", "yes"]);
-            option(
-                ui,
-                mdp,
-                "constraints",
-                &["none", "h-bonds", "all-bonds", "h-angles", "all-angles"],
-            );
+            constraints(ui, mdp);
             option(ui, mdp, "constraint-algorithm", &["lincs", "shake"]);
             fields(
                 ui,
@@ -243,26 +255,9 @@ fn edit_mdp(ui: &mut Ui, mdp: &mut String) {
 
     CollapsingHeader::new("Temperature and pressure").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            option(
-                ui,
-                mdp,
-                "tcoupl",
-                &[
-                    "no",
-                    "berendsen",
-                    "nose-hoover",
-                    "v-rescale",
-                    "andersen",
-                    "andersen-massive",
-                ],
-            );
+            thermostat(ui, mdp);
             fields(ui, mdp, &["tc-grps", "tau-t", "ref-t", "nsttcouple"]);
-            option(
-                ui,
-                mdp,
-                "pcoupl",
-                &["no", "berendsen", "parrinello-rahman", "c-rescale", "mttk"],
-            );
+            barostat(ui, mdp);
             option(
                 ui,
                 mdp,
@@ -398,6 +393,77 @@ fn edit_mdp(ui: &mut Ui, mdp: &mut String) {
     });
 }
 
+fn integrator(ui: &mut Ui, mdp: &mut String) {
+    option(
+        ui,
+        mdp,
+        "integrator",
+        &[
+            "md",
+            "md-vv",
+            "md-vv-avek",
+            "sd",
+            "bd",
+            "steep",
+            "cg",
+            "l-bfgs",
+            "nm",
+            "tpi",
+            "tpic",
+            "mimic",
+        ],
+    );
+}
+
+fn constraints(ui: &mut Ui, mdp: &mut String) {
+    option(
+        ui,
+        mdp,
+        "constraints",
+        &["none", "h-bonds", "all-bonds", "h-angles", "all-angles"],
+    );
+}
+
+fn thermostat(ui: &mut Ui, mdp: &mut String) {
+    option(
+        ui,
+        mdp,
+        "tcoupl",
+        &[
+            "no",
+            "berendsen",
+            "nose-hoover",
+            "v-rescale",
+            "andersen",
+            "andersen-massive",
+        ],
+    );
+}
+
+fn barostat(ui: &mut Ui, mdp: &mut String) {
+    option(
+        ui,
+        mdp,
+        "pcoupl",
+        &["no", "berendsen", "parrinello-rahman", "c-rescale", "mttk"],
+    );
+}
+
+fn run_length(ui: &mut Ui, mdp: &mut String) {
+    field(ui, mdp, "nsteps", "Steps");
+    field(ui, mdp, "dt", "dt (ps)");
+    if let (Some(steps), Some(dt)) = (
+        mdp_value(mdp, "nsteps").and_then(|v| v.parse::<i64>().ok()),
+        mdp_value(mdp, "dt").and_then(|v| v.parse::<f64>().ok()),
+    ) {
+        if steps == -1 {
+            ui.label("Unlimited steps");
+        } else if steps >= 0 && dt.is_finite() && dt > 0. {
+            super::md::show_runtime(ui, steps as f64, dt);
+        }
+    }
+}
+
 fn option(ui: &mut Ui, mdp: &mut String, key: &str, choices: &[&str]) {
     let current = mdp_value(mdp, key).unwrap_or_default();
     let mut chosen = current;
@@ -434,31 +500,35 @@ fn option(ui: &mut Ui, mdp: &mut String, key: &str, choices: &[&str]) {
 }
 
 fn fields(ui: &mut Ui, mdp: &mut String, keys: &[&str]) {
+    for &key in keys {
+        field(ui, mdp, key, key);
+    }
+}
+
+fn field(ui: &mut Ui, mdp: &mut String, key: &str, label: &str) {
     const INPUT_WIDTH: f32 = 66.;
     let gap = ui.spacing().item_spacing.x;
 
-    for &key in keys {
-        let mut value = mdp_field_value(mdp, key).unwrap_or_default().to_owned();
-        let label_width = text_width(ui, key, TextStyle::Body);
+    let mut value = mdp_field_value(mdp, key).unwrap_or_default().to_owned();
+    let label_width = text_width(ui, label, TextStyle::Body);
 
-        inline_control(ui, label_width + gap + INPUT_WIDTH, |ui| {
-            let label_width = label_width.min((ui.available_width() - gap - INPUT_WIDTH).max(0.));
-            ui.add_sized(
-                vec2(label_width, ui.spacing().interact_size.y),
-                Label::new(key).truncate(),
-            )
-            .on_hover_text(key);
-            let response = ui.add(
-                TextEdit::singleline(&mut value)
-                    .id_salt(key)
-                    .hint_text("Default")
-                    .desired_width(INPUT_WIDTH),
-            );
-            if response.changed() {
-                set_mdp_value(mdp, key, &value);
-            }
-        });
-    }
+    inline_control(ui, label_width + gap + INPUT_WIDTH, |ui| {
+        let label_width = label_width.min((ui.available_width() - gap - INPUT_WIDTH).max(0.));
+        ui.add_sized(
+            vec2(label_width, ui.spacing().interact_size.y),
+            Label::new(label).truncate(),
+        )
+        .on_hover_text(key);
+        let response = ui.add(
+            TextEdit::singleline(&mut value)
+                .id_salt(key)
+                .hint_text("Default")
+                .desired_width(INPUT_WIDTH),
+        );
+        if response.changed() {
+            set_mdp_value(mdp, key, &value);
+        }
+    });
 }
 
 fn text_width(ui: &Ui, text: &str, style: TextStyle) -> f32 {
