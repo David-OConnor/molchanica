@@ -245,6 +245,10 @@ impl QueueSnapshot {
 }
 
 impl ExternalToolsUi {
+    pub(super) fn has_pending_job(&self, tool: Tool) -> bool {
+        self.queue.snapshot().place(tool).is_some()
+    }
+
     fn is_probing(&self) -> bool {
         !self.probes.is_empty()
     }
@@ -501,16 +505,12 @@ pub fn install_btn(state: &mut crate::state::State, tool: Tool, ui: &mut Ui) {
         return;
     }
 
-    if button!(
-        ui,
-        format!("{} isn't installed. Click here to install it", spec.name()),
-        COLOR_AMBER,
-        spec.summary()
-    )
-    .clicked()
-    {
-        tools.queue_install(tool, ui.ctx(), computations);
-    }
+    ui.horizontal_wrapped(|ui| {
+        ui.label(format!("{} isn't installed.", spec.name()));
+        if button!(ui, "Install", COLOR_AMBER, spec.summary()).clicked() {
+            tools.queue_install(tool, ui.ctx(), computations);
+        }
+    });
 
     if let Some(InstallResult::Failed(error)) = tools.install_results.get(&tool) {
         ui.label(RichText::new("Install failed").color(Color32::ORANGE))

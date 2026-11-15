@@ -229,8 +229,13 @@ pub(in crate::ui) fn tool_window(
     }
 
     let computations = &state.volatile.ongoing_computations;
+    let install_pending = kind == ToolWindowKind::QuantumChemistry
+        && state.ui.external_tools.has_pending_job(window.tool);
     let compute = Compute {
-        target: state.to_save.compute_target,
+        target: match kind {
+            ToolWindowKind::QuantumChemistry => state.to_save.quantum_compute_target,
+            _ => state.to_save.compute_target,
+        },
         token: &state.to_save.athanor_api_token,
         adapter: scene.adapter_info.as_ref(),
     };
@@ -243,6 +248,7 @@ pub(in crate::ui) fn tool_window(
                 &state.sequences,
                 computations,
                 &compute,
+                install_pending,
                 ui,
             )
         })
@@ -1184,6 +1190,7 @@ impl ToolWindow {
         sequences: &[Sequence],
         computations: &Computations,
         compute: &Compute,
+        install_pending: bool,
         ui: &mut Ui,
     ) -> Option<PathBuf> {
         let tools = kind.tools();
@@ -1350,7 +1357,7 @@ impl ToolWindow {
 
         let mut install = false;
         let mut run = false;
-        let installed = external_tools::is_installed(self.tool);
+        let installed = !install_pending && external_tools::is_installed(self.tool);
         let busy = busy || project_input;
 
         footer.horizontal(|ui| {
@@ -1361,7 +1368,7 @@ impl ToolWindow {
                         Button::new(RichText::new("Run").color(COLOR_ACTION)),
                     )
                     .clicked();
-            } else {
+            } else if kind != ToolWindowKind::QuantumChemistry {
                 install = ui
                     .add_enabled(
                         !busy && spec.can_install_here(),

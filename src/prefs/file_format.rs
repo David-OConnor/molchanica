@@ -1512,11 +1512,12 @@ impl ToSave {
             packets.push((PacketType::SelectionsAndRepresentations, out));
         }
 
-        // RemoteCompute: target byte, then u32 token len, token.
+        // RemoteCompute: protein target, u32 token length, token, quantum target.
         {
             let mut out = vec![self.compute_target.to_u8()];
             out.extend_from_slice(&(self.athanor_api_token.len() as u32).to_le_bytes());
             out.extend_from_slice(self.athanor_api_token.as_bytes());
+            out.push(self.quantum_compute_target.to_u8());
             packets.push((PacketType::RemoteCompute, out));
         }
 
@@ -1571,10 +1572,13 @@ impl ToSave {
                     if let Some(&target) = payload.first() {
                         to_save.compute_target = ComputeTarget::from_u8(target);
                     }
-                    if payload.len() >= 5 {
-                        let len = parse_le!(payload, u32, 1..5) as usize;
-                        if let Some(token) = payload.get(5..5 + len) {
+                    if let Some(rest) = payload.get(5..) {
+                        let token_len = parse_le!(payload, u32, 1..5) as usize;
+                        if let Some((token, options)) = rest.split_at_checked(token_len) {
                             to_save.athanor_api_token = String::from_utf8_lossy(token).into_owned();
+                            if let Some(&target) = options.first() {
+                                to_save.quantum_compute_target = ComputeTarget::from_u8(target);
+                            }
                         }
                     }
                 }

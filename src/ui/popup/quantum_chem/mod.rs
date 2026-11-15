@@ -6,10 +6,16 @@ use graphics::{EngineUpdates, Scene};
 use serde_json::Value;
 
 use super::{
+    compute_selector,
+    external_tools::install_btn,
     flex_lists::PageLists,
+    remote_token_ui,
     tool_runner::{ToolWindowKind, tool_window},
 };
-use crate::{external_tools::tool_form::FormField, state::State};
+use crate::{
+    external_tools::{self, Tool, remote::ComputeTarget, tool_form::FormField},
+    state::State,
+};
 
 pub(super) fn window(
     state: &mut State,
@@ -17,6 +23,23 @@ pub(super) fn window(
     updates: &mut EngineUpdates,
     ui: &mut Ui,
 ) {
+    ui.horizontal(|ui| {
+        compute_selector(
+            ui,
+            &mut state.to_save.quantum_compute_target,
+            "Run on this computer's CPU. Install the selected backend first.",
+        );
+    });
+
+    if state.to_save.quantum_compute_target == ComputeTarget::Remote {
+        remote_token_ui(ui, &mut state.to_save.athanor_api_token);
+    } else if state.ui.external_tools.has_pending_job(Tool::Psi4)
+        || !external_tools::is_installed(Tool::Psi4)
+    {
+        install_btn(state, Tool::Psi4, ui);
+    }
+
+    ui.separator();
     tool_window(state, ToolWindowKind::QuantumChemistry, scene, updates, ui);
 }
 

@@ -337,6 +337,7 @@ pub struct ToSave {
     pub synthesis_show_safety: bool,
     /// Where the protein design tools run.
     pub compute_target: crate::external_tools::remote::ComputeTarget,
+    pub quantum_compute_target: crate::external_tools::remote::ComputeTarget,
     /// For remote runs. Empty runs them anonymously.
     pub athanor_api_token: String,
 }
@@ -370,6 +371,7 @@ impl Default for ToSave {
             reaction_diagram_scale: 1.0,
             synthesis_show_safety: false,
             compute_target: Default::default(),
+            quantum_compute_target: Default::default(),
             athanor_api_token: String::new(),
         }
     }

@@ -400,45 +400,15 @@ fn protein_tools(
         }
 
         ui.add_space(COL_SPACING * 2.);
-        ui.label("Compute");
-        if let Some(target) = selector(
+        compute_selector(
             ui,
-            state.to_save.compute_target,
-            &[
-                (
-                    ComputeTarget::Local,
-                    ComputeTarget::Local.label(),
-                    "Run tools on this computer. Each must be installed, and most need an \
-                    NVIDIA GPU.",
-                ),
-                (
-                    ComputeTarget::Remote,
-                    ComputeTarget::Remote.label(),
-                    "Run tools on athanortools.com, and download the results here. Nothing to \
-                    install, and any tool runs, whatever this computer's OS and GPU. Inputs are \
-                    sent to the site.",
-                ),
-            ],
-        ) {
-            state.to_save.compute_target = target;
-        }
+            &mut state.to_save.compute_target,
+            "Run tools on this computer. Each must be installed, and most need an NVIDIA GPU.",
+        );
     });
 
     if state.to_save.compute_target == ComputeTarget::Remote {
-        ui.horizontal(|ui| {
-            let help = "Optional. Runs without a token are anonymous, and limited per day. Make \
-                one on your athanortools.com dashboard.";
-
-            ui.label("athanortools.com API token").on_hover_text(help);
-            ui.add(
-                TextEdit::singleline(&mut state.to_save.athanor_api_token)
-                    .password(true)
-                    .hint_text("Optional")
-                    .desired_width(220.),
-            )
-            .on_hover_text(help);
-            ui.hyperlink_to("Get a token", remote::DASHBOARD_URL);
-        });
+        remote_token_ui(ui, &mut state.to_save.athanor_api_token);
     }
 
     ui.separator();
@@ -466,6 +436,45 @@ fn protein_tools(
             });
         }
     }
+}
+
+fn compute_selector(ui: &mut Ui, target: &mut ComputeTarget, local_help: &str) {
+    ui.label("Compute");
+    if let Some(selected) = selector(
+        ui,
+        *target,
+        &[
+            (
+                ComputeTarget::Local,
+                ComputeTarget::Local.label(),
+                local_help,
+            ),
+            (
+                ComputeTarget::Remote,
+                ComputeTarget::Remote.label(),
+                "Send inputs to athanortools.com and download the results here.",
+            ),
+        ],
+    ) {
+        *target = selected;
+    }
+}
+
+fn remote_token_ui(ui: &mut Ui, token: &mut String) {
+    ui.horizontal(|ui| {
+        let help = "Optional. Runs without a token are anonymous, and limited per day. Make \
+            one on your athanortools.com dashboard.";
+
+        ui.label("athanortools.com API token").on_hover_text(help);
+        ui.add(
+            TextEdit::singleline(token)
+                .password(true)
+                .hint_text("Optional")
+                .desired_width(220.),
+        )
+        .on_hover_text(help);
+        ui.hyperlink_to("Get a token", remote::DASHBOARD_URL);
+    });
 }
 
 fn get_geostd(
