@@ -77,6 +77,7 @@ pub fn family_name(family: ForceFieldFamily) -> &'static str {
         ForceFieldFamily::Amber => "Amber",
         ForceFieldFamily::Charmm36 => "CHARMM36m",
         ForceFieldFamily::Opls => "OPLS-AA/L",
+        ForceFieldFamily::OplsNucleic => "OPLS-AA/RESP (DNA/RNA)",
         ForceFieldFamily::Gfnn => "GFN-FF",
         ForceFieldFamily::Custom => "Custom",
     }
@@ -925,6 +926,7 @@ pub fn selector(state: &mut State, ui: &mut Ui, id: &str, compact: bool) {
                 // others work in a simple manner.
                 // ForceFieldFamily::Charmm36,
                 ForceFieldFamily::Opls,
+                ForceFieldFamily::OplsNucleic,
                 ForceFieldFamily::Gfnn,
             ] {
                 ui.selectable_value(&mut family, value, family_name(value));

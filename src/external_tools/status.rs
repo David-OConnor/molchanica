@@ -138,7 +138,10 @@ pub fn check(tool: Tool) -> ToolStatus {
     if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3)
         && std::env::var_os(spec.exe_override_env).is_none()
         && spec.root_override_env.and_then(std::env::var_os).is_none()
-        && spec.bundle_root_override_env.and_then(std::env::var_os).is_none()
+        && spec
+            .bundle_root_override_env
+            .and_then(std::env::var_os)
+            .is_none()
         && let Some(recipe) = spec.recipe()
     {
         let installer = process_executables_dir().and_then(|root| {
@@ -157,7 +160,10 @@ pub fn check(tool: Tool) -> ToolStatus {
         return ToolStatus {
             tool,
             result,
-            detail: status.detail,
+            detail: match status.device {
+                Some(device) => format!("{} ({device})", status.detail),
+                None => status.detail,
+            },
             path: Some(executable),
         };
     }

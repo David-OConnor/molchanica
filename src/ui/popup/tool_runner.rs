@@ -84,10 +84,10 @@ impl ToolWindowKind {
     fn tools(self) -> &'static [Tool] {
         match self {
             Self::StructurePrediction => &[
+                Tool::OpenFold3,
                 Tool::OpenDde,
                 Tool::Boltz2,
                 Tool::Chai1,
-                Tool::OpenFold3,
                 Tool::Protenix,
                 Tool::EsmFold2,
                 Tool::AlphaFold3,
@@ -825,8 +825,15 @@ pub(crate) struct ToolWindow {
 
 impl ToolWindow {
     fn new(kind: ToolWindowKind) -> Self {
+        let tools = kind.tools();
+        let tool = tools
+            .iter()
+            .copied()
+            .find(|tool| tool.spec().is_supported())
+            .unwrap_or(tools[0]);
+
         Self {
-            tool: kind.tools()[0],
+            tool,
             forms: HashMap::new(),
             receiver: None,
             control: None,

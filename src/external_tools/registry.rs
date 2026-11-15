@@ -658,9 +658,17 @@ mod tests {
     fn only_the_linux_only_recipes_are_gated() {
         // Chai-1 also runs on Apple Silicon, on the CPU.
         let expected: &[&str] = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            &["OpenFold3", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+            &["Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+        } else if cfg!(target_os = "macos") {
+            &["Chai-1", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
         } else {
-            &["Chai-1", "OpenFold3", "Protenix-v2", "ESMFold 2", "AlphaFold 3"]
+            &[
+                "Chai-1",
+                "OpenFold3",
+                "Protenix-v2",
+                "ESMFold 2",
+                "AlphaFold 3",
+            ]
         };
         assert_eq!(gated(), expected);
     }

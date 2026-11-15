@@ -261,6 +261,17 @@ fn coordinator_command(tool: Tool) -> io::Result<Command> {
     let package = bio_tools::adapters::package_path()?;
     let uv = env::var_os("MOLCHANICA_UV")
         .or_else(|| env::var_os("BIO_TOOLS_UV"))
+        .or_else(|| {
+            let uv = process_executables_dir()
+                .ok()?
+                .join("python_envs/uv-bin")
+                .join(if cfg!(windows) { "uv.exe" } else { "uv" });
+            uv.is_file().then(|| uv.into_os_string())
+        })
+        .or_else(|| {
+            let uv = PathBuf::from(env::var_os("HOME")?).join(".local/bin/uv");
+            uv.is_file().then(|| uv.into_os_string())
+        })
         .unwrap_or_else(|| "uv".into());
 
     let mut command = Command::new(uv);
