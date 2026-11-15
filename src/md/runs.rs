@@ -1140,33 +1140,26 @@ fn show_playback(
     viewer::draw_mols(state, scene, updates);
 }
 
-/// Returns what was loaded into memory, if anything.
-pub(crate) fn show_gromacs_output(
+/// Loads a finished run's trajectory into the viewer: the first of `trajectories` that loads, else
+/// any in `dir`. Returns what was loaded into memory, if anything.
+fn show_run_output(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
-    output: &bio_files::gromacs::GromacsOutput,
+    dir: &Path,
+    trajectories: &[PathBuf],
+    structures: &[PathBuf],
+    backend: MdBackend,
 ) -> io::Result<Option<String>> {
-    let Some(path) = output.gro_path.as_ref() else {
-        return Ok(None);
-    };
-
     let max_gb = state.to_save.md.max_traj_auto_load_gb;
-    let dir =
-        gromacs_run_dir(path).ok_or_else(|| io::Error::other("Missing GROMACS run folder"))?;
-    let structures = [path.clone()];
-    let run = output
-        .trr_path
+    let run = trajectories
         .iter()
-        .chain(&output.xtc_path)
-        .find_map(|traj| {
-            load_binary_run(&dir, traj, &structures, MdBackend::Gromacs, false, max_gb).ok()
-        })
+        .find_map(|traj| load_binary_run(dir, traj, structures, backend, false, max_gb).ok())
         .map(Ok)
-        .unwrap_or_else(|| load(&dir, None, max_gb));
+        .unwrap_or_else(|| load(dir, None, max_gb));
     let run = match run {
         Ok(run) => run,
-        Err(_) if output.trr_path.is_none() && output.xtc_path.is_none() => return Ok(None),
+        Err(_) if trajectories.is_empty() => return Ok(None),
         Err(error) => return Err(error),
     };
 
@@ -1182,29 +1175,75 @@ pub(crate) fn show_gromacs_output(
     Ok(Some(run.load_info))
 }
 
+/// Returns what was loaded into memory, if anything.
+pub(crate) fn show_gromacs_output(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    output: &bio_files::gromacs::GromacsOutput,
+) -> io::Result<Option<String>> {
+    let Some(path) = output.gro_path.as_ref() else {
+        return Ok(None);
+    };
+
+    let dir =
+        gromacs_run_dir(path).ok_or_else(|| io::Error::other("Missing GROMACS run folder"))?;
+    let trajectories: Vec<_> = output
+        .trr_path
+        .iter()
+        .chain(&output.xtc_path)
+        .cloned()
+        .collect();
+
+    show_run_output(
+        state,
+        scene,
+        updates,
+        &dir,
+        &trajectories,
+        &[path.clone()],
+        MdBackend::Gromacs,
+    )
+}
+
+/// Returns what was loaded into memory, if anything.
+pub(super) fn show_dynamics_output(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    dir: &Path,
+) -> io::Result<Option<String>> {
+    let dir = dir.canonicalize()?;
+    let trajectories: Vec<_> = [dir.join("traj.trr")]
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+
+    show_run_output(
+        state,
+        scene,
+        updates,
+        &dir,
+        &trajectories,
+        &[dir.join("conf.gro")],
+        MdBackend::Dynamics,
+    )
+}
+
 /// GROMACS output files live directly in their run folder.
 pub(crate) fn gromacs_run_dir(path: &Path) -> Option<PathBuf> {
     path.parent()?.canonicalize().ok()
 }
 
-pub(super) fn save_memory_trajectory(
-    dir: &Path,
-    md: &dynamics::MdState,
-    dt: f32,
-) -> io::Result<()> {
-    if TRAJECTORIES
-        .iter()
-        .any(|ext| dir.join(format!("traj.{ext}")).is_file())
+/// Saves the final frame as the trajectory, if the run saved none.
+pub(super) fn save_final_frame(dir: &Path, md: &dynamics::MdState, dt: f32) -> io::Result<()> {
+    if md.step_count == 0
+        || TRAJECTORIES
+            .iter()
+            .any(|ext| dir.join(format!("traj.{ext}")).is_file())
     {
         return Ok(());
     }
 
-    let path = dir.join("traj.trr");
-    if !md.snapshots.is_empty() {
-        dynamics::snapshot::write_trr_snapshots(&path, &md.snapshots, dt)
-    } else if md.step_count > 0 {
-        dynamics::snapshot::write_trr_snapshots(&path, &[Snapshot::new(md)], dt)
-    } else {
-        Ok(())
-    }
+    dynamics::snapshot::write_trr_snapshots(&dir.join("traj.trr"), &[Snapshot::new(md)], dt)
 }

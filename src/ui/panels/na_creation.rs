@@ -6,6 +6,9 @@ use mol_defs::molecules::{
 };
 use na_seq::Nucleotide::{self, *};
 
+use super::sequence_input::{
+    INVALID_LETTER_COLOR, create_button, layout, letter_counts, status_label,
+};
 use crate::{
     cam::move_cam_to_mol_front,
     file_io::managed_mols,
@@ -17,10 +20,6 @@ use crate::{
         util::report_cache_result,
     },
     util::handle_err,
-};
-
-use super::sequence_input::{
-    INVALID_LETTER_COLOR, create_button, layout, letter_counts, status_label,
 };
 
 fn nt_name(nt: Nucleotide, na_type: NucleicAcidType) -> &'static str {

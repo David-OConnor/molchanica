@@ -1,9 +1,8 @@
 use egui::{Context, Id, Ui};
 use graphics::{EngineUpdates, Scene};
 
-use crate::{cam, mol_editor::enter_edit_mode, selection::Selection, state::State};
-
 use super::{action_search, open_docs, set_alignment_open, sidebar};
+use crate::{cam, mol_editor::enter_edit_mode, selection::Selection, state::State};
 
 pub(super) const DB_QUERY_ID: &str = "primary_db_query";
 pub(super) const FIND_ID: &str = "primary_find_in_molecule";

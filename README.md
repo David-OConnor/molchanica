@@ -25,7 +25,7 @@ Molchanica is intuitive enough that formal documentation isn't required to get s
 
 - **Windows**: Run the `*_setup.exe` installer.
 - **Linux**: Unzip, and run `setup_molchanica.sh` (Without `sudo`).
-- **Mac**: Unzip and run `molchanica`. (Standalone executable). Warning! Mac support is experimental, and untested.
+- **Mac**: Unzip and run `molchanica`.
 
 The "nocuda" downloads leave out the *cuFFT* library, only relevant for the *Dynamics* MD backend. The normal versions will work even if you don't have CUDA or an Nvidia GPU.
 
@@ -44,13 +44,19 @@ Allows one-click installation of external tools. Click the **Tools button** in t
 
 - GROMACS
 - xTB
-- ORCA
+- Dynamics (native)
 
 ### Protein design tools
 
 - **Backbone design** using RFDiffusion3
 - **Structure prediction** using OpenFold3, OpenDDE, Boltz-2, Chai-1, Protenix, and EsmFold2
 - **Sequence prediction** using ProteinMPNN and LigandMPNN
+
+### Quantum chemistry
+
+- ORCA
+- Psi4
+
 
 ### Others:
 
@@ -68,7 +74,7 @@ Allows one-click installation of external tools. Click the **Tools button** in t
 - Pymol-like selection syntax
 - Molecular dynamics, using Amber, OPLS, or GFN-FF force fields, and the OPC water model
 - Run [GROMACS](https://www.gromacs.org/) MD, and view trajectories using the same GUI as our native MD
-- Run [ORCA](https://www.faccts.de/orca/) quantum chemistry procedures on molecules (if ORCA is installed)
+- Run [ORCA](https://www.faccts.de/orca/) and [Psi4](https://psicode.org/) quantum chemistry procedures on molecules (if ORCA is installed)
 - Run structure prediction with [OpenFold3](https://github.com/aqlaboratory/openfold-3), [OpenDDE](https://github.com/aurekaresearch/OpenDDE), [Boltz-2](https://github.com/jwohlwend/boltz), and [Chai-1](https://github.com/chaidiscovery/chai-lab)
 - Run sequence prediction with [ProteinMPNN](https://github.com/dauparas/ProteinMPNN) and [LigandMPNN](https://github.com/dauparas/LigandMPNN)
 - Scan every point mutation at every position for stability (ΔΔG), in a single pass, natively — no Python needed at run time
@@ -107,7 +113,7 @@ Most functionality works without internet connectivity. If you have internet, it
 ![UI image showing mol properties and a protien](/screenshots/molchanica_ui_apr_2026.png)
 
 ## Parallel computing
-Use of GPU vs CPU as the computation device depends on which functionality is used. External tools like GROMACS, xTB, RFdiffusion3, ProteinMPNN, and OpenDDE each have their own requirements regarding which GPU vendors (Nvidia, AMD, Apple) are supported. Some programs like ORCA run primarily on CPU.
+Use of GPU vs CPU as the computation device depends on which functionality is used. External tools like GROMACS, xTB, RFdiffusion3, ProteinMPNN, and OpenDDE each have their own requirements regarding which GPU vendors (Nvidia, AMD, Apple) are supported. Some programs like ORCA and Psi4 run primarily on CPU.
 
 ## Native GPU-accelerated computations.
 If an Nvidia GPU of at least RTX 3 series is available, molecular dynamics via the *Dynamics* backend, and electron density calculations will be performed using the GPU via CUDA kernels. 

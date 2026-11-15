@@ -8,6 +8,9 @@ use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolType, MoleculeGeneric, aa_color};
 use na_seq::{AaIdent, AminoAcid, SeqType, Sequence, SequenceData};
 
+use super::sequence_input::{
+    INVALID_LETTER_COLOR, create_button, layout, letter_counts, status_label,
+};
 use crate::{
     cam::{move_cam_to_mol_front, move_mol_to_cam},
     drawing::aa_highlight::AMINO_ACIDS,
@@ -22,10 +25,6 @@ use crate::{
         util::report_cache_result,
     },
     util::{handle_err, handle_success, make_egui_color},
-};
-
-use super::sequence_input::{
-    INVALID_LETTER_COLOR, create_button, layout, letter_counts, status_label,
 };
 
 /// The amino acid buttons wrap at this width.

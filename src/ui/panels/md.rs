@@ -46,15 +46,7 @@ pub fn md_setup(
         launch_md(state, true, false);
     } else if state.volatile.md_local.running {
         // This is spammed each frame, so don't print, which handle_success does.
-        let auto = state.volatile.md_local.run_auto_load;
-        state.ui.cmd_line_output = match auto.limit {
-            Some(limit) => format!(
-                "MD Running... Memory snapshot step {}, {}.",
-                auto.step,
-                limit.describe()
-            ),
-            None => "MD Running...".to_string(),
-        };
+        state.ui.cmd_line_output = "MD Running...".to_string();
         state.ui.cmd_line_out_is_err = false;
     }
 
@@ -1041,32 +1033,6 @@ fn output_control(state: &mut State, ui: &mut Ui) {
     let sh_def = SnapshotHandlers::default();
     // Use memory's default ratio as the shared fallback for all handler types.
     let default_file = sh_def.memory.map(|v| v as u32);
-
-    // Memory
-    if state.to_save.md.backend == MdBackend::Dynamics {
-        let help = "Save snapshots in memory.";
-        ui.label("Mem:").on_hover_text(help);
-        if ui
-            .checkbox(&mut state.ui.md.mem_enabled, "")
-            .on_hover_text(help)
-            .changed()
-        {
-            state.to_save.md.config.snapshot_handlers.memory = if state.ui.md.mem_enabled {
-                sh_def.memory
-            } else {
-                None
-            };
-            sync_ui = true;
-        }
-        if state.to_save.md.config.snapshot_handlers.memory.is_some() {
-            num_field_option(
-                &mut state.to_save.md.config.snapshot_handlers.memory,
-                "",
-                W,
-                ui,
-            );
-        }
-    }
 
     // TRR (coords / velocities / forces)
     {

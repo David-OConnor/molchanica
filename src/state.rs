@@ -1104,7 +1104,6 @@ pub struct StateUiMd {
     pub peptide_static: bool,
     /// Output control settings which don't directly map to `OutputControl`, but
     /// change them.
-    pub mem_enabled: bool,
     pub trr_enabled: bool,
     pub dcd_enabled: bool,
     pub xtc_enabled: bool,
@@ -1138,7 +1137,6 @@ impl Default for StateUiMd {
             langevin_γ: Default::default(),
             peptide_only_near_ligs: false,
             peptide_static: false,
-            mem_enabled: true,
             trr_enabled: true,
             dcd_enabled: false,
             xtc_enabled: true,
@@ -1195,7 +1193,6 @@ impl StateUiMd {
 
         let sh = &md_cfg.snapshot_handlers;
 
-        self.mem_enabled = sh.memory.is_some();
         self.trr_enabled = sh.gromacs.nstxout.is_some()
             || sh.gromacs.nstvout.is_some()
             || sh.gromacs.nstfout.is_some();

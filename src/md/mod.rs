@@ -24,9 +24,8 @@ use rand::RngExt;
 use viewer::SnapshotViewer;
 
 use crate::{
-    cam::{VIEW_DIR_FRONT, move_cam_to_active_mol, reset_camera},
+    cam::move_cam_to_active_mol,
     gromacs,
-    md::trajectory::{AutoLoad, LoadKind, Trajectory, load_summary, snapshot_bytes},
     state::{ComputationGuard, ComputationType, State},
     util::{RedrawFlags, clear_cli_out, format_elapsed, handle_err, handle_success},
     xtb,
@@ -62,8 +61,6 @@ pub struct MdStateLocal {
     pub computation: Option<ComputationGuard>,
     pub start: Option<Instant>,
     pub run_steps_and_dt: (u32, f32),
-    /// Step on the configured memory snapshot interval, chosen at launch to fit the auto load limits.
-    pub run_auto_load: AutoLoad,
     pub run_output_dir: Option<std::path::PathBuf>,
     // todo: Consider if you want a dedicated MD playback operating mode. For now, this flag
     /// If true, render the molecules from this struct, instead of primary state molecules.
@@ -113,8 +110,8 @@ impl MdStateLocal {
 }
 
 /// For our non-blocking workflow. Run this once an MD run using the `Dynamics` engine is complete.
+/// Loads the saved trajectory, as for GROMACS.
 pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    let max_gb = state.to_save.md.max_traj_auto_load_gb;
     let md = &mut state.volatile.md_local;
 
     let Some(md_state) = &mut md.mol_dynamics else {
@@ -130,84 +127,44 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
 
     md.running = false;
     md.computation = None;
-    md.start = None;
-    md.draw_md_mols = true;
+    let elapsed = md.start.take().map(|start| start.elapsed());
 
     let mut save_error = md_state.finish_run_output().err();
     let output = md.run_output_dir.take();
     if let Some(dir) = &output {
-        let playback_error =
-            runs::save_memory_trajectory(dir, md_state, md.run_steps_and_dt.1).err();
-        save_error = save_error.or(playback_error);
+        let frame_error = runs::save_final_frame(dir, md_state, md.run_steps_and_dt.1).err();
+        save_error = save_error.or(frame_error);
     }
 
-    // Launch spaced the snapshots to fit the limits. Step further if the estimate fell short.
-    let n_frames = md_state.snapshots.len();
-    let frame_bytes = if n_frames > 0 {
-        md_state.snapshots.iter().map(snapshot_bytes).sum::<usize>() / n_frames
-    } else {
-        0
-    };
-    let post = AutoLoad::new(
-        n_frames,
-        frame_bytes,
-        frame_bytes,
-        max_gb,
-        LoadKind::InMemory,
-    );
-    let auto = std::mem::take(&mut md.run_auto_load).then(post);
-    let interval = md_state.cfg.snapshot_handlers.memory.unwrap_or(1) * post.step;
-
-    let snaps: Vec<_> = std::mem::take(&mut md_state.snapshots)
-        .into_iter()
-        .step_by(post.step)
-        .map(Arc::new)
-        .collect();
-    let load_info = if snaps.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " {} One frame per {interval} MD steps.",
-            load_summary(&snaps, None, auto.step, auto.limit)
-        )
+    let load_info = match &output {
+        Some(dir) => runs::show_dynamics_output(state, scene, updates, dir),
+        None => Ok(None),
     };
 
-    if let Some(set) = md.viewer.mol_sets.last_mut() {
-        let name = output.as_ref().and_then(|dir| dir.file_name()).map_or_else(
-            || "Dynamics".into(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-        let path = output
-            .as_ref()
-            .and_then(|dir| dir.canonicalize().ok())
-            .map(|dir| dir.join("conf.gro"));
-        set.name.clone_from(&name);
-        set.path.clone_from(&path);
-        md.viewer.mol_set_active = Some(md.viewer.mol_sets.len() - 1);
-
-        for traj in &mut state.trajectories {
-            traj.ui_active = false;
-        }
-        if !snaps.is_empty() {
-            let mut trajectory =
-                Trajectory::new_in_memory(snaps.clone(), name, md.run_steps_and_dt.1);
-            trajectory.ui_active = true;
-            trajectory.run_mol_set_path = path;
-            state.trajectories.push(trajectory);
-        }
-    }
-    md.viewer.playing = false;
-    md.replace_snaps(snaps);
-
-    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
-    viewer::draw_mols(state, scene, updates);
-    if let Some(error) = save_error {
-        handle_err(
+    match (save_error, load_info) {
+        (Some(error), _) => handle_err(
             &mut state.ui,
-            format!("MD complete. Error saving output: {error}.{load_info}"),
-        );
-    } else {
-        handle_success(&mut state.ui, format!("MD complete.{load_info}"));
+            format!("Dynamics finished. Error saving output: {error}"),
+        ),
+        (None, Err(error)) => handle_err(
+            &mut state.ui,
+            format!("Dynamics finished. Could not open output: {error}"),
+        ),
+        (None, Ok(load_info)) => handle_success(
+            &mut state.ui,
+            format!(
+                "Dynamics finished{}{}{}",
+                elapsed
+                    .map(|e| format!(" in {}", format_elapsed(e)))
+                    .unwrap_or_default(),
+                output
+                    .map(|dir| format!(" · {}", dir.display()))
+                    .unwrap_or_default(),
+                load_info
+                    .map(|info| format!(". {info}"))
+                    .unwrap_or_default()
+            ),
+        ),
     }
 }
 
@@ -1101,11 +1058,17 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
 
                 return;
             }
-            state
-                .volatile
-                .md_local
-                .viewer
-                .add_mol_set(&viewer_mol_refs, num_water);
+
+            // A run's mol set reaches the viewer with its trajectory, as for GROMACS.
+            let mut run_viewer = SnapshotViewer::default();
+            run_viewer.add_mol_set(&viewer_mol_refs, num_water);
+            if !run {
+                state
+                    .volatile
+                    .md_local
+                    .viewer
+                    .add_mol_set(&viewer_mol_refs, num_water);
+            }
 
             if let Some(lambda) = alchemical {
                 // Decouple the first molecule, matching the water_sol.rs convention.
@@ -1128,7 +1091,7 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                     .and_then(|dir| {
                         crate::project::save_md_inputs(
                             state,
-                            state.volatile.md_local.viewer.mol_sets.last().unwrap(),
+                            &run_viewer.mol_sets[0],
                             &md.cfg,
                             &dir,
                         )?;
@@ -1141,20 +1104,13 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                             &mut state.ui,
                             format!("Could not save Dynamics run inputs: {error}"),
                         );
-                        let viewer = &mut state.volatile.md_local.viewer;
-                        viewer.mol_sets.pop();
-                        viewer.mol_set_active =
-                            viewer.mol_set_active.filter(|&i| i < viewer.mol_sets.len());
 
                         return;
                     }
                 }
-                // After saving the inputs, so they keep the configured interval.
-                state.volatile.md_local.run_auto_load = space_mem_snapshots(
-                    &mut md,
-                    settings.0,
-                    state.to_save.md.max_traj_auto_load_gb,
-                );
+                // Frames load from the saved trajectory after the run, as for GROMACS. After
+                // saving the inputs, so they keep the configured interval, e.g. for xTB.
+                md.cfg.snapshot_handlers.memory = None;
 
                 state.volatile.md_local.run_steps_and_dt = settings;
                 state.volatile.md_local.start = Some(Instant::now());
@@ -1172,27 +1128,6 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }
     state.volatile.md_local.pep_atom_set = md_pep_sel;
-}
-
-/// Raises the memory snapshot interval so a run's snapshots fit the auto load limits. Returns
-/// the step applied to the configured interval.
-fn space_mem_snapshots(md: &mut MdState, num_steps: u32, max_gb: f32) -> AutoLoad {
-    let Some(interval) = md.cfg.snapshot_handlers.memory.filter(|&r| r > 0) else {
-        return AutoLoad::default();
-    };
-
-    // A snapshot as `MdState::handle_snapshots` stores it, including H bonds.
-    let mut probe = Snapshot::new(md);
-    probe.update_with_energy(md, 0., 0.);
-    probe.force = Some(md.atoms.iter().map(|a| a.force).collect());
-
-    let bytes = snapshot_bytes(&probe);
-    let n_frames = num_steps as usize / interval + 1;
-    let auto = AutoLoad::new(n_frames, bytes, bytes, max_gb, LoadKind::Pending);
-
-    md.cfg.snapshot_handlers.memory = Some(interval * auto.step);
-
-    auto
 }
 
 /// Converts the `custom_solvent` vec returned by `MdState::new` into owned `MoleculeCommon`
