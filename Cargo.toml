@@ -96,7 +96,7 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 graphics = { path = "../../graphics" }
 lin_alg = { path = "../../lin_alg" }
 #na_seq = { path = "../na_seq" }
-#bio_apis = { path = "../bio_apis" }
+bio_apis = { path = "../bio_apis" }
 bio_tools = { path = "../bio_tools" }
 #mcubes = { path = "../mcubes" }
 bio_files = { path = "../bio_files" }

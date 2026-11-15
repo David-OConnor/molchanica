@@ -8,14 +8,8 @@ use crate::{
     mol_manip::{self, ManipMode},
     selection::Selection,
     state::State,
+    ui::action_search,
 };
-
-#[derive(Clone, Default)]
-struct Palette {
-    open: bool,
-    query: String,
-    selected: usize,
-}
 
 pub(super) fn take(ui: &Ui, action: &str) -> bool {
     ui.ctx().data_mut(|data| {
@@ -33,19 +27,7 @@ pub(super) fn take(ui: &Ui, action: &str) -> bool {
 pub(super) fn palette(state: &State, ui: &mut Ui) {
     ui.ctx()
         .data_mut(|data| data.remove::<String>(Id::new("editor_action")));
-    let id = Id::new("editor_palette");
-    let mut palette = ui
-        .ctx()
-        .data_mut(|data| data.get_temp::<Palette>(id).unwrap_or_default());
-    let requested =
-        super::edit_hotkey_pressed(ui, Key::F3) || ui.button("Search actions · F3").clicked();
-    if requested {
-        palette.open = true;
-        palette.query.clear();
-        palette.selected = 0;
-    }
-
-    if palette.open {
+    let chosen = action_search::show(ui, Id::new("editor_palette"), "Editor actions", || {
         let atom = matches!(
             state.ui.selection,
             Selection::AtomLig(_) | Selection::AtomsLig(_)
@@ -130,78 +112,13 @@ pub(super) fn palette(state: &State, ui: &mut Ui) {
             ));
         }
 
-        let mut chosen = None;
-        let modal = egui::Modal::new(id).show(ui.ctx(), |ui| {
-            ui.set_min_width(380.);
-            ui.horizontal(|ui| {
-                ui.heading("Editor actions");
-                if ui.button("Close").clicked() {
-                    ui.close();
-                }
-            });
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut palette.query)
-                    .hint_text("Search commands…")
-                    .desired_width(f32::INFINITY),
-            );
-            if requested {
-                response.request_focus();
-            }
-            if response.changed() {
-                palette.selected = 0;
-            }
+        commands
+    });
 
-            let query = palette.query.to_lowercase();
-            let matches: Vec<_> = commands
-                .iter()
-                .filter(|(_, label, _, enabled)| *enabled && label.to_lowercase().contains(&query))
-                .collect();
-            palette.selected = palette.selected.min(matches.len().saturating_sub(1));
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::ArrowDown)) {
-                palette.selected = (palette.selected + 1).min(matches.len().saturating_sub(1));
-            }
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::ArrowUp)) {
-                palette.selected = palette.selected.saturating_sub(1);
-            }
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Enter))
-                && let Some(command) = matches.get(palette.selected)
-            {
-                chosen = Some(command.0.to_owned());
-            }
-            egui::ScrollArea::vertical()
-                .max_height(300.)
-                .show(ui, |ui| {
-                    for (i, (action, label, shortcut, _)) in matches.iter().enumerate() {
-                        let response = ui.selectable_label(
-                            palette.selected == i,
-                            format!("{label}    {shortcut}"),
-                        );
-                        if response.clicked() {
-                            chosen = Some((*action).to_owned());
-                        }
-                        if i == palette.selected {
-                            response.scroll_to_me(None);
-                        }
-                    }
-                    if matches.is_empty() {
-                        ui.label("No available commands match.");
-                    }
-                });
-            ui.small("Up/Down choose · Enter run · Esc close");
-            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape)) {
-                palette.open = false;
-            }
-        });
-
-        palette.open &= !modal.should_close();
-        if let Some(chosen) = chosen {
-            palette.open = false;
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(Id::new("editor_action"), chosen));
-        }
+    if let Some(chosen) = chosen {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(Id::new("editor_action"), chosen.to_owned()));
     }
-
-    ui.ctx().data_mut(|data| data.insert_temp(id, palette));
 }
 
 pub(super) fn selected_atoms(state: &State) -> Vec<usize> {

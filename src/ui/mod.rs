@@ -47,12 +47,14 @@ use crate::{
     },
 };
 
+mod action_search;
 pub(crate) mod measurements;
 pub mod misc;
 pub mod mol_editor;
 mod mol_type_tools;
 mod panels;
 pub mod popup;
+mod primary_actions;
 mod safety;
 mod sidebar;
 pub mod util;
@@ -436,6 +438,7 @@ fn search_in_mol(state: &mut State, scene: &mut Scene, redraw: &mut RedrawFlags,
     let search_resp = ui
         .add(
             TextEdit::singleline(&mut state.ui.atom_res_search)
+                .id(egui::Id::new(primary_actions::FIND_ID))
                 .desired_width(60.)
                 .text_color_opt(text_color),
         )
@@ -762,6 +765,27 @@ fn input_may_change_prefs(ui: &Ui) -> bool {
     })
 }
 
+fn open_docs() {
+    if let Err(e) = webbrowser::open(DOCS_URL) {
+        eprintln!("Failed to open the web browser: {e:?}");
+    }
+}
+
+fn set_alignment_open(state: &mut State, open: bool) {
+    state.ui.popup.alignment = open;
+    if state.volatile.alignment.mols_to_align.len() < 2 {
+        state.volatile.alignment.mols_to_align = vec![0, 1];
+    }
+}
+
+#[cfg(feature = "synthesis")]
+fn set_synthesis_reactions_open(state: &mut State, open: bool) {
+    if open && !state.ui.popup.synthesis_reactions {
+        state.ui.synthesis_reactions.load();
+    }
+    state.ui.popup.synthesis_reactions = open;
+}
+
 /// A set of controls near the top of the main view. This has buttons to open various tools, settings, databases etc, and
 /// the query input.
 fn top_controls(
@@ -773,6 +797,8 @@ fn top_controls(
 ) {
     ui.horizontal_wrapped(|ui| {
         section_box().show(ui, |ui| {
+            primary_actions::show(state, scene, updates, ui);
+
             let color_settings = if state.ui.popup.show_settings {
                 Color32::LIGHT_RED
             } else {
@@ -824,11 +850,7 @@ fn top_controls(
                 )
                 .clicked()
             {
-                let opening = !state.ui.popup.synthesis_reactions;
-                state.ui.popup.synthesis_reactions = opening;
-                if opening {
-                    state.ui.synthesis_reactions.load();
-                }
+                set_synthesis_reactions_open(state, !state.ui.popup.synthesis_reactions);
             }
 
             if button!(
@@ -930,9 +952,7 @@ fn top_controls(
                 )
                 .clicked()
             {
-                if let Err(e) = webbrowser::open(DOCS_URL) {
-                    eprintln!("Failed to open the web browser: {:?}", e);
-                }
+                open_docs();
                 state.ui.popup.about = !state.ui.popup.about;
             }
 
@@ -1033,11 +1053,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                     window which lets you configure and run this alignment, then view the resulting 3D conformations,\
                     and similarity metrics.")
                         .clicked() {
-                        state.ui.popup.alignment = !state.ui.popup.alignment;
-
-                        if state.volatile.alignment.mols_to_align.len() < 2 {
-                            state.volatile.alignment.mols_to_align = vec![0, 1];
-                        }
+                        set_alignment_open(state, !state.ui.popup.alignment);
                     }
                 });
             });
@@ -1583,7 +1599,9 @@ fn query_input(
     let edit_resp = ui
         .add_enabled(
             !query_loading,
-            TextEdit::singleline(&mut state.ui.db_input).desired_width(180.),
+            TextEdit::singleline(&mut state.ui.db_input)
+                .id(egui::Id::new(primary_actions::DB_QUERY_ID))
+                .desired_width(180.),
         )
         .on_hover_text(query_help);
 

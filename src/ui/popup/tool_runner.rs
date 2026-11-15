@@ -21,7 +21,7 @@ use egui::{
     UiBuilder,
 };
 use egui_file_dialog::{FileDialog, FileDialogConfig};
-use graphics::{EngineUpdates, Scene};
+use graphics::{AdapterInfo, DeviceType, EngineUpdates, Scene};
 use mol_defs::molecules::peptide::MoleculePeptide;
 use na_seq::{SeqType, Sequence};
 use serde_json::{Map, Value, json};
@@ -31,9 +31,11 @@ use super::{
     flex_lists::{self, PageLists},
 };
 use crate::{
+    compute_caps,
     external_tools::{
         self, RunControl, Tool,
         pdb_write::{PdbWriteOptions, peptide_to_pdb},
+        remote::{self, ComputeTarget},
         shared_adapter::{self, AdapterResult},
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
@@ -49,6 +51,83 @@ use crate::{
 
 /// Outputs larger than this are not previewed inline.
 const MAX_PREVIEW_BYTES: u64 = 2_000_000;
+
+/// PCI vendor ID, as `AdapterInfo::vendor` reports it.
+const NVIDIA_VENDOR_ID: u32 = 0x10DE;
+
+/// Whether `tool` is better run locally or remotely on this machine, and why. `None` while the GPU
+/// check is still running.
+fn recommended_compute(
+    tool: Tool,
+    adapter: Option<&AdapterInfo>,
+) -> Option<(ComputeTarget, String)> {
+    if let Some(message) = tool.spec().unavailable_message() {
+        return Some((ComputeTarget::Remote, format!("{message}.")));
+    }
+
+    let caps = compute_caps::get();
+    if cfg!(feature = "cuda") && caps.is_none() {
+        return None;
+    }
+
+    let cuda_gpu = caps
+        .filter(|caps| caps.cuda.is_some())
+        .and_then(|caps| caps.gpus.first());
+    if let Some(gpu) = cuda_gpu {
+        return Some((ComputeTarget::Local, format!("{gpu} detected.")));
+    }
+
+    let unverified = (
+        ComputeTarget::Local,
+        "CUDA support is unverified.".to_owned(),
+    );
+    let Some(adapter) = adapter else {
+        return Some(unverified);
+    };
+
+    Some(match adapter.device_type {
+        DeviceType::IntegratedGpu => (
+            ComputeTarget::Remote,
+            "Integrated graphics only; local runs would be slow.".to_owned(),
+        ),
+        DeviceType::Cpu => (
+            ComputeTarget::Remote,
+            "No GPU in use; local runs would be slow.".to_owned(),
+        ),
+        DeviceType::DiscreteGpu if adapter.vendor != NVIDIA_VENDOR_ID => (
+            ComputeTarget::Remote,
+            format!(
+                "{} is not an NVIDIA GPU; local runs would be slow.",
+                adapter.name
+            ),
+        ),
+        _ => unverified,
+    })
+}
+
+/// Which compute target to use for `tool`; orange when it isn't the one selected.
+fn compute_guidance(tool: Tool, target: ComputeTarget, adapter: Option<&AdapterInfo>, ui: &mut Ui) {
+    let Some((recommended, reason)) = recommended_compute(tool, adapter) else {
+        ui.small("Checking local GPU support…");
+        ui.request_repaint_after(Duration::from_millis(100));
+
+        return;
+    };
+
+    let text = format!("{} compute recommended · {reason}", recommended.label());
+    if recommended == target {
+        ui.small(text);
+    } else {
+        ui.colored_label(Color32::ORANGE, text);
+    }
+}
+
+/// The API token setting, as `remote::run` takes it.
+fn remote_token(token: &str) -> Option<String> {
+    let token = token.trim();
+
+    (!token.is_empty()).then(|| token.to_owned())
+}
 
 // ---------------------------------------------------------------------------------------------
 // Windows
@@ -141,10 +220,22 @@ pub(in crate::ui) fn tool_window(
     ui.heading(kind.heading());
 
     let computations = &state.volatile.ongoing_computations;
+    let compute = Compute {
+        target: state.to_save.compute_target,
+        token: &state.to_save.athanor_api_token,
+        adapter: scene.adapter_info.as_ref(),
+    };
 
     let load = ui
         .push_id(kind.heading(), |ui| {
-            window.draw(kind, &state.peptides, &state.sequences, computations, ui)
+            window.draw(
+                kind,
+                &state.peptides,
+                &state.sequences,
+                computations,
+                &compute,
+                ui,
+            )
         })
         .inner;
 
@@ -152,6 +243,20 @@ pub(in crate::ui) fn tool_window(
         && let Err(error) = state.open_file(&path, scene, updates)
     {
         handle_err(&mut state.ui, error.to_string());
+    }
+}
+
+/// Where a tool window's runs go, and what it needs to advise on that.
+pub(super) struct Compute<'a> {
+    pub target: ComputeTarget,
+    /// athanortools.com API token, for remote runs. May be empty.
+    pub token: &'a str,
+    pub adapter: Option<&'a AdapterInfo>,
+}
+
+impl Compute<'_> {
+    fn remote(&self) -> bool {
+        self.target == ComputeTarget::Remote
     }
 }
 
@@ -876,11 +981,17 @@ impl ToolWindow {
         match result {
             JobResult::Run(Ok(result)) => {
                 let first = primary_file(self.tool, &result).cloned();
+                let message = if remote_results_url(&result).is_some() {
+                    "Downloaded from athanortools.com. All raw results are retained on disk."
+                } else {
+                    "All raw results are retained on disk."
+                };
+
                 self.results.push((self.tool, result));
                 self.selected_result = self.results.len() - 1;
                 self.preview = first.as_ref().map(|path| preview_text(path));
                 self.selected_file = first;
-                self.message = Some("All raw results are retained on disk.".into());
+                self.message = Some(message.into());
                 self.results_heading = Some("Run complete");
             }
             JobResult::Run(Err(error)) | JobResult::Install(Err(error)) => self.error = Some(error),
@@ -908,6 +1019,7 @@ impl ToolWindow {
     pub(super) fn binding_controls(
         &mut self,
         computations: &Computations,
+        compute: &Compute,
         lists: &mut PageLists,
         ui: &mut Ui,
         make_request: impl FnOnce() -> Result<crate::drug_design::binding::PredictionRequest, String>,
@@ -915,23 +1027,24 @@ impl ToolWindow {
         self.poll();
         self.handle_picked_file(ui);
         self.progress_ui(ui);
+
         let tool = Tool::Boltz2;
         let spec = tool.spec();
         let busy = self.busy();
+        let remote = compute.remote();
         let installed = external_tools::is_installed(tool);
-        if let Some(message) = spec.unavailable_message() {
-            ui.colored_label(Color32::ORANGE, format!("{message}."));
-        }
+        compute_guidance(tool, compute.target, compute.adapter, ui);
+
         let mut run = false;
         let mut install = false;
         ui.horizontal_wrapped(|ui| {
             run = ui
                 .add_enabled(
-                    !busy && installed && spec.is_supported(),
+                    !busy && (remote || (installed && spec.is_supported())),
                     Button::new(RichText::new("Predict complex + affinity").color(COLOR_ACTION)),
                 )
                 .clicked();
-            if !installed {
+            if !installed && !remote {
                 install = ui
                     .add_enabled(
                         !busy && spec.can_install_here(),
@@ -961,12 +1074,20 @@ impl ToolWindow {
                     let computation = computations.start(
                         ComputationType::MachineLearning,
                         spec.name(),
-                        Some("complex and affinity prediction".into()),
+                        Some(activity("complex and affinity prediction", remote)),
                     );
                     let control = RunControl::default();
+                    let token = remote_token(compute.token);
+
                     self.control = Some(control.clone());
                     self.start_job(ui, false, computation, move || {
-                        JobResult::Run(request.run(&control).map_err(|e| e.to_string()))
+                        let result = if remote {
+                            request.run_remote(token, &control)
+                        } else {
+                            request.run(&control)
+                        };
+
+                        JobResult::Run(result.map_err(|e| e.to_string()))
                     });
                 }
             }
@@ -1012,9 +1133,11 @@ impl ToolWindow {
         proteins: &[MoleculePeptide],
         sequences: &[Sequence],
         computations: &Computations,
+        compute: &Compute,
         ui: &mut Ui,
     ) -> Option<PathBuf> {
         let tools = kind.tools();
+        let remote = compute.remote();
 
         self.poll();
         self.handle_picked_file(ui);
@@ -1031,8 +1154,6 @@ impl ToolWindow {
 
         let busy = self.receiver.is_some();
 
-        let spec = self.tool.spec();
-
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
                 ComboBox::from_id_salt("scientific_tool")
@@ -1048,12 +1169,8 @@ impl ToolWindow {
             tool_links(self.tool, ui);
         });
 
-        if let Some(message) = spec.unavailable_message() {
-            ui.colored_label(
-                Color32::ORANGE,
-                format!("{message}. Inputs and results can still be viewed here."),
-            );
-        }
+        let spec = self.tool.spec();
+        compute_guidance(self.tool, compute.target, compute.adapter, ui);
 
         if let Entry::Vacant(entry) = self.forms.entry(self.tool) {
             match Form::new(self.tool) {
@@ -1175,10 +1292,10 @@ impl ToolWindow {
         let installed = external_tools::is_installed(self.tool);
 
         footer.horizontal(|ui| {
-            if installed {
+            if remote || installed {
                 run = ui
                     .add_enabled(
-                        !busy && spec.is_supported() && form.projection_error.is_none(),
+                        !busy && (remote || spec.is_supported()) && form.projection_error.is_none(),
                         Button::new(RichText::new("Run").color(COLOR_ACTION)),
                     )
                     .clicked();
@@ -1190,7 +1307,13 @@ impl ToolWindow {
                     )
                     .clicked();
             }
-            ui.label(RichText::new("Raw outputs are saved locally.").small());
+
+            let note = if remote {
+                "Runs on athanortools.com. Raw outputs are downloaded and saved locally."
+            } else {
+                "Raw outputs are saved locally."
+            };
+            ui.label(RichText::new(note).small());
             if ui
                 .button("Open saved run…")
                 .on_hover_text("Choose result.json from a saved run folder.")
@@ -1223,16 +1346,21 @@ impl ToolWindow {
                     let computation = computations.start(
                         ComputationType::MachineLearning,
                         spec.name(),
-                        Some(kind.activity().to_owned()),
+                        Some(activity(kind.activity(), remote)),
                     );
 
                     let control = RunControl::default();
+                    let token = remote_token(compute.token);
+
                     self.control = Some(control.clone());
                     self.start_job(ui, false, computation, move || {
-                        JobResult::Run(
+                        let result = if remote {
+                            remote::run(tool, payload, token, &control)
+                        } else {
                             shared_adapter::run(tool, payload, &control)
-                                .map_err(|error| error.to_string()),
-                        )
+                        };
+
+                        JobResult::Run(result.map_err(|error| error.to_string()))
                     });
                 }
             }
@@ -1416,6 +1544,10 @@ impl ToolWindow {
             ));
 
             if let Some(control) = &self.control {
+                if let Some(note) = control.note() {
+                    ui.label(note);
+                }
+
                 if ui
                     .add_enabled(!control.is_abort_requested(), Button::new("Abort run"))
                     .clicked()
@@ -1534,6 +1666,9 @@ impl ToolWindow {
                 && let Err(error) = open_dir(&result.directory)
             {
                 self.error = Some(error.to_string());
+            }
+            if let Some(url) = remote_results_url(result) {
+                ui.hyperlink_to("View on athanortools.com", url);
             }
         });
 
@@ -1712,6 +1847,20 @@ fn boltz_summary_ui(outputs: &[(String, Result<Value, String>)], ui: &mut Ui) {
         "https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md#output",
     );
     ui.separator();
+}
+
+/// The athanortools.com page of a run made there.
+fn remote_results_url(result: &AdapterResult) -> Option<&str> {
+    result.details["remote"]["results_url"].as_str()
+}
+
+/// What a run does, for the computation status display.
+fn activity(what: &str, remote: bool) -> String {
+    if remote {
+        format!("{what} on athanortools.com")
+    } else {
+        what.to_owned()
+    }
 }
 
 /// The text shown when an output file is selected.

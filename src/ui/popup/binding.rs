@@ -10,9 +10,13 @@ use egui::{Color32, ComboBox, DragValue, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::MolType;
 
-use super::{flex_lists::PageLists, tool_runner::ToolWindow};
+use super::{
+    flex_lists::PageLists,
+    tool_runner::{Compute, ToolWindow},
+};
 use crate::{
     drug_design::binding::{self, PoseReport, PredictionOptions, PredictionRequest},
+    external_tools::remote::ComputeTarget,
     protein_alignment,
     selection::{MoleculeAtoms, Selection, expression},
     state::State,
@@ -373,6 +377,9 @@ pub(super) fn editor(
                 ui.text_edit_singleline(&mut editor.options.job_name);
             });
             ui.checkbox(&mut editor.options.use_template, "Use displayed protein chain as a structural template");
+            if editor.options.use_template && state.to_save.compute_target == ComputeTarget::Remote {
+                ui.colored_label(Color32::ORANGE, "Remote runs don't send the template; Boltz-2 predicts the chain from its sequence.");
+            }
             ui.small("Only observed amino-acid residues are included. Missing residues are omitted; other chains and cofactors require the advanced structure-prediction form.");
             egui::CollapsingHeader::new("Review protein sequence and residue mapping").show(ui, |ui| {
                 let residues = binding::chain_residues(protein, editor.chain);
@@ -442,30 +449,38 @@ pub(super) fn editor(
             "Boltz-2 input and output definitions",
             "https://github.com/jwohlwend/boltz/blob/main/docs/prediction.md",
         );
-        load =
-            editor
-                .runner
-                .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
-                    if stale_site {
-                        return Err(
-                            "Refresh or clear the stale binding-site guidance before predicting."
-                                .into(),
-                        );
-                    }
-                    let mut request = PredictionRequest::new(
-                        protein,
-                        &ligand.common,
-                        editor.chain,
-                        &editor.smiles,
-                        &editor.pocket,
-                        &editor.options,
-                    )?;
-                    if report_current {
-                        request.provenance["pose_report"] =
-                            serde_json::to_value(&editor.report).map_err(|e| e.to_string())?;
-                    }
-                    Ok(request)
-                });
+        let compute = Compute {
+            target: state.to_save.compute_target,
+            token: &state.to_save.athanor_api_token,
+            adapter: scene.adapter_info.as_ref(),
+        };
+        load = editor.runner.binding_controls(
+            &state.volatile.ongoing_computations,
+            &compute,
+            lists,
+            ui,
+            || {
+                if stale_site {
+                    return Err(
+                        "Refresh or clear the stale binding-site guidance before predicting."
+                            .into(),
+                    );
+                }
+                let mut request = PredictionRequest::new(
+                    protein,
+                    &ligand.common,
+                    editor.chain,
+                    &editor.smiles,
+                    &editor.pocket,
+                    &editor.options,
+                )?;
+                if report_current {
+                    request.provenance["pose_report"] =
+                        serde_json::to_value(&editor.report).map_err(|e| e.to_string())?;
+                }
+                Ok(request)
+            },
+        );
 
         if let Some(report) = &editor.report {
             if let Some(residues) = select_residues {
@@ -485,12 +500,18 @@ pub(super) fn editor(
     } else {
         ui.label("Open a protein and a small molecule to start a binding workflow.");
         // Saved results remain accessible even after input objects have been closed.
-        load =
-            editor
-                .runner
-                .binding_controls(&state.volatile.ongoing_computations, lists, ui, || {
-                    Err("Choose an open protein and ligand before predicting.".into())
-                });
+        let compute = Compute {
+            target: state.to_save.compute_target,
+            token: &state.to_save.athanor_api_token,
+            adapter: scene.adapter_info.as_ref(),
+        };
+        load = editor.runner.binding_controls(
+            &state.volatile.ongoing_computations,
+            &compute,
+            lists,
+            ui,
+            || Err("Choose an open protein and ligand before predicting.".into()),
+        );
     }
     if !editor.message.is_empty() {
         ui.colored_label(Color32::ORANGE, &editor.message);

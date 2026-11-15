@@ -314,7 +314,7 @@ fn python_bindings_requirement() -> String {
 }
 
 /// `<process_executables>/results/<slug>/<timestamp>-<pid>`, created fresh.
-fn create_results_dir(executables: &Path, tool: Tool) -> io::Result<PathBuf> {
+pub(super) fn create_results_dir(executables: &Path, tool: Tool) -> io::Result<PathBuf> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -328,7 +328,7 @@ fn create_results_dir(executables: &Path, tool: Tool) -> io::Result<PathBuf> {
     Ok(directory)
 }
 
-fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+pub(super) fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
     if !path.is_dir() {
         return Ok(());
     }

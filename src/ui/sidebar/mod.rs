@@ -156,6 +156,29 @@ fn open_tools(state: &mut State, ui: &mut Ui) {
     }
 }
 
+fn active_sequence(state: &State) -> Option<usize> {
+    state
+        .volatile
+        .active_seq
+        .filter(|&i| i < state.sequences.len())
+}
+
+pub(super) fn can_save_active(state: &State) -> bool {
+    active_sequence(state).is_some() || state.active_mol().is_some()
+}
+
+pub(super) fn save_active(state: &mut State) {
+    if let Some(i) = active_sequence(state) {
+        save_seq_dialog(state, i);
+    } else if let Some(mol) = state.active_mol() {
+        let common = mol.common().clone();
+        let mol_type = mol.mol_type();
+        if let Err(error) = save_mol(&common, mol_type, &mut state.volatile.dialogs.save) {
+            handle_err(&mut state.ui, format!("Problem saving this file: {error}"));
+        }
+    }
+}
+
 /// Truncated to the row's remaining width, so it never widens the sidebar. Details on hover.
 fn compute_caps_label(ui: &mut Ui) {
     let Some(caps) = compute_caps::get() else {
@@ -475,29 +498,13 @@ pub(in crate::ui) fn sidebar(
                     open_tools(state, ui);
                 }
 
-                let active_seq = state
-                    .volatile
-                    .active_seq
-                    .filter(|&i| i < state.sequences.len());
-
-                if (state.active_mol().is_some() || active_seq.is_some())
+                if can_save_active(state)
                     && ui
                         .button(RichText::new("Save"))
                         .on_hover_text("Save the active molecule or sequence to a file.")
                         .clicked()
                 {
-                    if let Some(i) = active_seq {
-                        save_seq_dialog(state, i);
-                    } else if let Some(mol) = state.active_mol() {
-                        // The dialog needs a mutable borrow of state below.
-                        let common = mol.common().clone();
-                        let mol_type = mol.mol_type();
-                        if let Err(error) =
-                            save_mol(&common, mol_type, &mut state.volatile.dialogs.save)
-                        {
-                            handle_err(&mut state.ui, format!("Problem saving this file: {error}"));
-                        }
-                    }
+                    save_active(state);
                 }
             });
 

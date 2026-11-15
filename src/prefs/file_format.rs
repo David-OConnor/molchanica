@@ -41,6 +41,7 @@ use mol_defs::{
 use crate::{
     docking::DockingSite,
     drawing::MoleculeView,
+    external_tools::remote::ComputeTarget,
     md::MdBackend,
     prefs::{
         ControlSchemeType, ControlSettings, DepthMode, Graphics, MdPrefs, OpenHistory, OpenType,
@@ -98,6 +99,7 @@ enum PacketType {
     Inspection = 12,
     CommandMacros = 13,
     RecentMdRuns = 14,
+    RemoteCompute = 15,
 }
 
 impl PacketType {
@@ -118,6 +120,7 @@ impl PacketType {
             12 => Self::Inspection,
             13 => Self::CommandMacros,
             14 => Self::RecentMdRuns,
+            15 => Self::RemoteCompute,
             _ => return None,
         })
     }
@@ -198,6 +201,22 @@ impl MsaaSetting {
             1 => Self::None,
             4 => Self::Four,
             _ => Self::default(),
+        }
+    }
+}
+
+impl PrefsByte for ComputeTarget {
+    fn to_u8(self) -> u8 {
+        match self {
+            Self::Local => 0,
+            Self::Remote => 1,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Remote,
+            _ => Self::Local,
         }
     }
 }
@@ -1493,6 +1512,14 @@ impl ToSave {
             packets.push((PacketType::SelectionsAndRepresentations, out));
         }
 
+        // RemoteCompute: target byte, then u32 token len, token.
+        {
+            let mut out = vec![self.compute_target.to_u8()];
+            out.extend_from_slice(&(self.athanor_api_token.len() as u32).to_le_bytes());
+            out.extend_from_slice(self.athanor_api_token.as_bytes());
+            packets.push((PacketType::RemoteCompute, out));
+        }
+
         let mut out = McaHeader {
             num_packets: packets.len() as u8,
         }
@@ -1540,6 +1567,17 @@ impl ToSave {
             };
 
             match packet_type {
+                PacketType::RemoteCompute => {
+                    if let Some(&target) = payload.first() {
+                        to_save.compute_target = ComputeTarget::from_u8(target);
+                    }
+                    if payload.len() >= 5 {
+                        let len = parse_le!(payload, u32, 1..5) as usize;
+                        if let Some(token) = payload.get(5..5 + len) {
+                            to_save.athanor_api_token = String::from_utf8_lossy(token).into_owned();
+                        }
+                    }
+                }
                 PacketType::CommandMacros => {
                     to_save.command_macros = bincode::decode_from_slice(
                         payload,

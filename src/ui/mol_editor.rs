@@ -62,7 +62,7 @@ fn edit_hotkey_pressed(ui: &Ui, key: Key) -> bool {
     });
     if ui.ctx().text_edit_focused()
         || ui.ctx().memory(|memory| memory.top_modal_layer().is_some())
-        || (transforming && !matches!(key, Key::F | Key::F3))
+        || (transforming && key != Key::F)
     {
         return false;
     }

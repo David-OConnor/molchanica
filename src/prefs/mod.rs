@@ -335,6 +335,10 @@ pub struct ToSave {
     pub reaction_diagram_scale: f32,
     /// Show GHS hazard pictograms and summaries in the synthesis reaction library.
     pub synthesis_show_safety: bool,
+    /// Where the protein design tools run.
+    pub compute_target: crate::external_tools::remote::ComputeTarget,
+    /// For remote runs. Empty runs them anonymously.
+    pub athanor_api_token: String,
 }
 
 impl Default for ToSave {
@@ -365,6 +369,8 @@ impl Default for ToSave {
             manual_depth_cache: (VIEW_DEPTH_NEAR_MIN, VIEW_DEPTH_DEFAULT),
             reaction_diagram_scale: 1.0,
             synthesis_show_safety: false,
+            compute_target: Default::default(),
+            athanor_api_token: String::new(),
         }
     }
 }

@@ -36,6 +36,7 @@ use tool_runner::{ToolWindowKind, tool_window};
 use crate::{
     button, cam,
     cam::{MolCameraTarget, move_cam_to_mol},
+    external_tools::remote::{self, ComputeTarget},
     file_io::download_mols::load_atom_coords_rcsb,
     label,
     mol_alignment::run_alignment,
@@ -385,7 +386,48 @@ fn protein_tools(
         ) {
             state.ui.popup.protein_tools_tab = tab;
         }
+
+        ui.add_space(COL_SPACING * 2.);
+        ui.label("Compute");
+        if let Some(target) = selector(
+            ui,
+            state.to_save.compute_target,
+            &[
+                (
+                    ComputeTarget::Local,
+                    ComputeTarget::Local.label(),
+                    "Run tools on this computer. Each must be installed, and most need an \
+                    NVIDIA GPU.",
+                ),
+                (
+                    ComputeTarget::Remote,
+                    ComputeTarget::Remote.label(),
+                    "Run tools on athanortools.com, and download the results here. Nothing to \
+                    install, and any tool runs, whatever this computer's OS and GPU. Inputs are \
+                    sent to the site.",
+                ),
+            ],
+        ) {
+            state.to_save.compute_target = target;
+        }
     });
+
+    if state.to_save.compute_target == ComputeTarget::Remote {
+        ui.horizontal(|ui| {
+            let help = "Optional. Runs without a token are anonymous, and limited per day. Make \
+                one on your athanortools.com dashboard.";
+
+            ui.label("athanortools.com API token").on_hover_text(help);
+            ui.add(
+                TextEdit::singleline(&mut state.to_save.athanor_api_token)
+                    .password(true)
+                    .hint_text("Optional")
+                    .desired_width(220.),
+            )
+            .on_hover_text(help);
+            ui.hyperlink_to("Get a token", remote::DASHBOARD_URL);
+        });
+    }
 
     ui.separator();
 

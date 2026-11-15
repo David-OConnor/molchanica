@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use crate::external_tools::{
     RunControl, Tool,
     pdb_write::{PdbWriteOptions, peptide_to_pdb},
+    remote,
     shared_adapter::{self, AdapterResult},
     tool_form::FormContract,
 };
@@ -507,6 +508,23 @@ impl PredictionRequest {
                     .to_string(),
                 );
             }
+            Ok(self.payload)
+        })
+    }
+
+    /// As [`Self::run`], on athanortools.com. The template is a local file path, so it is not sent;
+    /// Boltz-2 predicts the chain from its sequence.
+    pub fn run_remote(
+        self,
+        token: Option<String>,
+        control: &RunControl,
+    ) -> io::Result<AdapterResult> {
+        remote::run_prepared(Tool::Boltz2, token, control, |directory| {
+            fs::write(
+                directory.join("binding-input.json"),
+                serde_json::to_vec_pretty(&self.provenance)?,
+            )?;
+
             Ok(self.payload)
         })
     }

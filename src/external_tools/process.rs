@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
@@ -115,10 +115,12 @@ impl Drop for ToolWorkspace {
     }
 }
 
-/// A cloneable cancellation signal shared by the UI and a worker running a tool.
+/// A cloneable cancellation signal shared by the UI and a worker running a tool, and a short
+/// status note the worker may post, e.g. a remote job's place in its queue.
 #[derive(Clone, Debug, Default)]
 pub struct RunControl {
     cancel_requested: Arc<AtomicBool>,
+    note: Arc<Mutex<Option<String>>>,
 }
 
 impl RunControl {
@@ -128,6 +130,16 @@ impl RunControl {
 
     pub fn is_abort_requested(&self) -> bool {
         self.cancel_requested.load(Ordering::Acquire)
+    }
+
+    pub fn set_note(&self, note: impl Into<String>) {
+        if let Ok(mut current) = self.note.lock() {
+            *current = Some(note.into());
+        }
+    }
+
+    pub fn note(&self) -> Option<String> {
+        self.note.lock().ok().and_then(|note| note.clone())
     }
 
     fn check_cancelled(&self, tool: Tool) -> io::Result<()> {

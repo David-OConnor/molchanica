@@ -28,6 +28,7 @@
 //!   Python adapters. [`tool_form`] loads the form contract and presets `bio_tools` publishes, and
 //!   [`shared_adapter`] runs a submitted form. One form, runner, and result browser
 //!   (`ui::popup::tool_runner`) serves all of them, so there is no per-tool code for these here.
+//!   [`remote`] runs the same payload on athanortools.com instead.
 //! - **External** (GROMACS, ORCA, Gemmi): driven from elsewhere in Molchanica; this module only
 //!   finds, probes, and reports on them.
 //!
@@ -76,6 +77,7 @@ pub mod process;
 pub mod registry;
 pub mod status;
 
+pub mod remote;
 pub mod shared_adapter;
 pub mod tool_form;
 
