@@ -1,3 +1,5 @@
+mod actions;
+
 use bio_files::BondType;
 use dynamics::Solvent;
 use egui::{Color32, ComboBox, Key, Modifiers, RichText, Slider, Ui};
@@ -28,7 +30,7 @@ use crate::{
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::{State, StateUi},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_INACTIVE, COLOR_REMOVE, misc,
+        COL_SPACING, COLOR_ACTIVE, COLOR_INACTIVE, COLOR_REMOVE, misc,
         misc::{active_color, section_box},
         panels::{
             md_viewer::energy_disp, mol_data::selected_data_mol_editor,
@@ -45,11 +47,7 @@ use crate::{
 
 // These are in ps.
 const DT_MIN: f32 = 0.00001;
-const DT_MAX: f32 = 0.0001; // No more than 0.002 for stability. currently 0.5fs.
-
-// Higher may be relax more, but takes longer. We aim for a small time so it can be done without
-// a noticeable lag.
-const MAX_RELAX_ITERS: usize = 300;
+const DT_MAX: f32 = 0.0001;
 
 // Atom serial number labels, drawn over each atom when "Atom #" is enabled. Cyan: distinct from the
 // (pink) pharmacophore feature numbering, and from the element, pocket, and H bond colors.
@@ -58,7 +56,14 @@ pub const ATOM_SN_LABEL_COLOR: (u8, u8, u8, u8) = (40, 220, 255, 255);
 /// Keep editor shortcuts available over the scene and buttons, but leave text input and
 /// modified shortcuts alone. Consuming a press prevents it from activating twice in a frame.
 fn edit_hotkey_pressed(ui: &Ui, key: Key) -> bool {
-    if ui.ctx().text_edit_focused() {
+    let transforming = ui.ctx().data(|data| {
+        data.get_temp::<bool>(egui::Id::new("editor_transform_active"))
+            .unwrap_or(false)
+    });
+    if ui.ctx().text_edit_focused()
+        || ui.ctx().memory(|memory| memory.top_modal_layer().is_some())
+        || (transforming && !matches!(key, Key::F | Key::F3))
+    {
         return false;
     }
 
@@ -106,10 +111,11 @@ fn change_el_button(
         ))
         .clicked()
         || edit_hotkey_pressed(ui, hotkey)
+        || actions::take(ui, &format!("element_{}", el.to_letter()))
     {
-        let idxs = match sel {
-            Selection::AtomLig((_, i)) => vec![*i],
-            Selection::AtomsLig((_, i)) => i.to_vec(),
+        let (mol_i, idxs) = match sel {
+            Selection::AtomLig((mol_i, i)) => (*mol_i, vec![*i]),
+            Selection::AtomsLig((mol_i, i)) => (*mol_i, i.to_vec()),
             _ => {
                 eprintln!("Attempting to change an element with an invalid selection");
                 return;
@@ -126,7 +132,7 @@ fn change_el_button(
             .map(|a| a.serial_number)
             .collect();
 
-        for sn in sns {
+        for &sn in &sns {
             let Some(i) = index_of_sn(&mol.common, sn) else {
                 continue;
             };
@@ -143,6 +149,16 @@ fn change_el_button(
             );
         }
 
+        let indices: Vec<_> = sns
+            .iter()
+            .filter_map(|&sn| index_of_sn(&mol.common, sn))
+            .collect();
+        state_ui.selection = match indices.len() {
+            0 => Selection::None,
+            1 => Selection::AtomLig((mol_i, indices[0])),
+            _ => Selection::AtomsLig((mol_i, indices)),
+        };
+
         engine_updates.entities = EntityUpdate::All;
 
         *redraw = true;
@@ -157,6 +173,23 @@ pub(in crate::ui) fn editor(
     mut redraw: bool,
     ui: &mut Ui,
 ) {
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            egui::Id::new("editor_transform_active"),
+            state.volatile.mol_manip.mode != ManipMode::None,
+        )
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Molecule editor");
+        actions::palette(state, ui);
+        file_controls(state, scene, updates, ui, &mut redraw);
+        actions::utilities(state, scene, updates, ui, &mut redraw);
+    });
+
+    if state.volatile.operating_mode != crate::state::OperatingMode::MolEditor {
+        return;
+    }
+
     ui.horizontal_wrapped(|ui| {
         section_box().show(ui, |ui| {
             // ui.horizontal_wrapped(|ui| {
@@ -269,6 +302,7 @@ pub(in crate::ui) fn editor(
         });
 
         section_box().show(ui, |ui| {
+            ui.strong("Simulate");
             let prev = state.mol_editor.md.running;
             misc::toggle_btn(
                 &mut state.mol_editor.md.running,
@@ -277,6 +311,10 @@ pub(in crate::ui) fn editor(
                 ui,
                 &mut redraw_,
             );
+
+            if actions::take(ui, "simulate") {
+                state.mol_editor.md.running = !state.mol_editor.md.running;
+            }
 
             if state.mol_editor.md.running {
                 let color = active_color(state.mol_editor.md.solvent != Solvent::None);
@@ -298,24 +336,22 @@ pub(in crate::ui) fn editor(
 
             let started = !prev && state.mol_editor.md.running;
 
-            if started && (state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none()) {
-                let build_result = mol_editor::build_dynamics(
-                    &state.computation_device(),
-                    &mut state.mol_editor,
-                    &state.ff_param_set,
-                    &state.to_save.md.config,
-                );
-                match build_result {
-                    Ok(d) => {
-                        state.mol_editor.md.md = Some(d);
-                        state.mol_editor.md.rebuild_required = false;
-                    }
-                    Err(e) => {
-                        state.mol_editor.md.md = None;
-                        state.mol_editor.md.rebuild_required = true;
-                        eprintln!("Problem setting up dynamics for the editor: {e:?}");
-                    }
+            if prev != state.mol_editor.md.running {
+                let running = state.mol_editor.md.running;
+                state.mol_editor.md.running = prev;
+                if state.volatile.mol_manip.mode != ManipMode::None {
+                    mol_manip::end_transform(state, scene, false, &mut Default::default(), updates);
                 }
+                state.mol_editor.md.running = running;
+            }
+            if started {
+                mol_editor::ensure_dynamics(state);
+            } else if !state.mol_editor.md.running {
+                state.mol_editor.md.pull_target = None;
+            }
+
+            if state.mol_editor.md.running && state.mol_editor.md.rebuild_required {
+                mol_editor::ensure_dynamics(state);
             }
         });
 
@@ -324,66 +360,9 @@ pub(in crate::ui) fn editor(
             redraw = true;
         }
 
-        if ui.button(RichText::new("Clear all").color(COLOR_REMOVE))
-            .on_hover_text("Delete all atoms; start fresh")
-            .clicked() {
-
-            // state.mol_editor.mol.common = Default::default();
-
-            state.mol_editor.clear_mol(&mut state.ui.selection);
-
-            state.mol_editor.md.rebuild_required = true;
-            state.mol_editor.rebuild_ff_related(&state.ff_param_set);
-
-            redraw = true;
-        }
-
-        ui.add_space(COL_SPACING / 2.);
-        // todo: implement
-        if ui.button("Metadata")
-            .on_hover_text("View and edit metadata for this molecule. This will be stored in the file when saved.")
-            .clicked() {}
-
-        if ui.button("Check DBs")
-            .on_hover_text("Look up this molecule, as it currently is, on PubChem by its SMILES. \
-            The result displays in the sidebar.")
-            .clicked() {
-            mol_editor::check_dbs(state);
-        }
-
-        ui.add_space(COL_SPACING);
-        if ui
-            .button(RichText::new("Save"))
-            .on_hover_text("Save to a Mol2, SDF, or PDBQT file")
-            .clicked() && save_mol(
-            &state.mol_editor.mol.common,
-            MolType::Ligand,
-            &mut state.volatile.dialogs.save,
-        )
-        .is_err()
-        {
-            handle_err(&mut state.ui, "Problem saving this file".to_owned());
-        }
-
-        if ui
-            .button(RichText::new("Load"))
-            .on_hover_text("Load from a Mol2, SDF XYZ etc file")
-            .clicked()
-        {
-            state.volatile.dialogs.load.pick_file();
-        }
-
-        if ui
-            .button(RichText::new("Re-assign SNs"))
-            .on_hover_text("Reset atom serial numbers to be sequential without gaps.")
-            .clicked()
-        {
-            state.mol_editor.mol.common.reassign_sns();
-        }
-
         if ui.button("Cleanup geom")
             .on_hover_text("A fast, analytic approach to fixing unphysical geometry.")
-            .clicked() {
+            .clicked() || actions::take(ui, "cleanup") {
             set_manip(
                 state,
                 scene,
@@ -394,12 +373,13 @@ pub(in crate::ui) fn editor(
             );
 
             state.mol_editor.mol.common.cleanup_geometry();
+            sync_md(state);
             redraw = true;
         }
 
         if ui.button("Relax")
             .on_hover_text("Relax geometry; adjust atom positions to minimize energy, based on a standard small-molecule force field.")
-            .clicked() {
+            .clicked() || actions::take(ui, "relax") {
             set_manip(
                 state,
                 scene,
@@ -409,91 +389,14 @@ pub(in crate::ui) fn editor(
                 updates,
             );
 
-            if state.mol_editor.md.rebuild_required || state.mol_editor.md.md.is_none() {
-                let build_result = mol_editor::build_dynamics(
-                    &state.computation_device(),
-                    &mut state.mol_editor,
-                    &state.ff_param_set,
-                    &state.to_save.md.config,
-                );
-
-                match build_result {
-                    Ok(md) => {
-                        state.mol_editor.md.md = Some(md);
-                        state.mol_editor.md.rebuild_required = false;
-                    }
-                    Err(e) => {
-                        // Never fall through to minimizing an older state after a rebuild failure.
-                        state.mol_editor.md.md = None;
-                        eprintln!("Problem setting up dynamics for the editor: {e:?}");
-                    }
-                }
-            }
-
-            let dev = state.computation_device();
-            if let Some(md) = &mut state.mol_editor.md.md {
-                md.minimize_energy(&dev, MAX_RELAX_ITERS, None); // todo: Iters A/R.
-                state.mol_editor.load_atom_posits_from_md(&mut scene.entities, &state.ui,
-                                                          updates, state.volatile.mol_manip.mode, );
-            }
+            mol_editor::relax(state, scene, updates);
         }
 
-        ui.add_space(COL_SPACING);
-        if ui
-            .button(RichText::new("Clear / add").color(Color32::LIGHT_RED))
-            .on_hover_text("Load the edited molecule, then start a fresh molecule in the editor.")
-            .clicked()
-        {
-            mol_editor::clear_and_add(state, scene, updates);
-        }
 
-        if let Some(mol_i) = state.mol_editor.mol_i_in_state
-            && mol_i < state.ligands.len()
-            && ui
-                .button(RichText::new("Clear / update").color(Color32::LIGHT_RED))
-                .on_hover_text(
-                    "Update the loaded molecule with changes made, then start a fresh molecule in the editor.",
-                )
-                .clicked()
-        {
-            mol_editor::clear_and_update(state, scene, updates, mol_i);
-        }
-
-        if ui
-            .button(RichText::new("Clear / discard").color(Color32::LIGHT_RED))
-            .on_hover_text("Discard unsaved changes, then start a fresh molecule in the editor.")
-            .clicked()
-        {
-            mol_editor::clear_editor(state, scene, updates);
-        }
-
-        ui.add_space(COL_SPACING);
-        if ui
-            .button(RichText::new("Exit / add").color(Color32::LIGHT_RED))
-            .on_hover_text("Exit the molecule editor, and load the edited molecule.")
-            .clicked()
-        {
-            mol_editor::exit_and_add(state, scene, updates);
-        }
-
-        if let Some(mol_i) = state.mol_editor.mol_i_in_state && mol_i < state.ligands.len() && ui
-            .button(RichText::new("Exit / update").color(Color32::LIGHT_RED))
-            .on_hover_text("Exit the molecule editor, and update the loaded molecule with changes made.")
-            .clicked()
-        {
-            mol_editor::exit_and_update(state, scene, updates, mol_i);
-        }
-
-        if ui
-            .button(RichText::new("Exit / discard").color(Color32::LIGHT_RED))
-            .on_hover_text("Exit the mol editor, discarding all unsaved changes.")
-            .clicked()
-        {
-            exit_edit_mode(state, scene, updates);
-        }
     });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Build");
         edit_tools(state, scene, ui, updates, &mut redraw);
 
         // todo: Show/hide this button A/R
@@ -533,7 +436,7 @@ pub(in crate::ui) fn editor(
                     );
                 }
 
-                sync_md(state);
+                mol_editor::relax_after_edit(state, scene, updates);
                 redraw = true;
             }
         }
@@ -568,38 +471,12 @@ pub(in crate::ui) fn editor(
         }
     });
 
-    ui.horizontal(|ui| {
-        if state.mol_editor.md.md.is_some() {
-            section_box().show(ui, |ui| {
-                ui.label("MD speed:");
-
-                ui.spacing_mut().slider_width = 200.;
-                ui.add(Slider::new(
-                    &mut state.mol_editor.md.dt,
-                    DT_MIN..=DT_MAX,
-                ))
-                    .on_hover_text("Set the simulation ratio compared to normal time.");
-
-                ui.add_space(COL_SPACING);
-
-                if let Some(snap) = &state.mol_editor.md.snap {
-                    energy_disp(snap, ui);
-                }
-            });
-
-            let ratio_help = "The ratio of simulation time to real time. A higher value means \
-            the sim is running faster relative to reality. If 1×10-¹⁵, it means for every second viewing in real time,\
-            the simulation runs 10¹⁵ of computed time.";
-
-            // todo: Cache; don't compute each frame.
-            // See the dt field doc comments for how we get this computation. We insert an additional
-            // factor of 10e5 to make the value more readable.
-            // 10e5: 10e3 for ms run interval. 10e3 to get between 10e-12 (input dt) and 10e-15 (displayed value)
-            // todo: Still an unaccounted for factor of 10...
-            let ratio = state.mol_editor.md.dt * 10e5 / state.mol_editor.md.time_between_runs;
-            ui.label(format!("Ratio: {ratio:.1}×10-¹⁵")).on_hover_text(ratio_help);
-        }
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Transform");
+        transform_tools(state, scene, updates, ui, &mut redraw);
     });
+    simulation_controls(state, ui);
+    actions::status(state, ui);
 
     selected_data_mol_editor(state, &state.ui.selection, ui);
 
@@ -619,6 +496,159 @@ pub(in crate::ui) fn editor(
     }
 }
 
+fn file_controls(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut bool,
+) {
+    ui.menu_button("File", |ui| {
+        if ui.button("Load molecule…").clicked() {
+            state.volatile.dialogs.load.pick_file();
+            ui.close();
+        }
+        if ui.button("Save molecule…").clicked() {
+            if save_mol(
+                &state.mol_editor.mol.common,
+                MolType::Ligand,
+                &mut state.volatile.dialogs.save,
+            )
+            .is_err()
+            {
+                handle_err(&mut state.ui, "Problem saving this file".to_owned());
+            }
+            ui.close();
+        }
+        if ui.button("Check PubChem").clicked() {
+            mol_editor::check_dbs(state);
+            ui.close();
+        }
+        if ui.button("Reassign atom numbers").clicked() {
+            state.mol_editor.mol.common.reassign_sns();
+            *redraw = true;
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .button(RichText::new("New molecule").color(COLOR_REMOVE))
+            .on_hover_text("Discard these edits and start a fresh molecule.")
+            .clicked()
+        {
+            mol_editor::clear_editor(state, scene, updates);
+            *redraw = true;
+            ui.close();
+        }
+    });
+    ui.menu_button("Finish editing", |ui| {
+        let original = state
+            .mol_editor
+            .mol_i_in_state
+            .filter(|&i| i < state.ligands.len());
+        for (label, exit, update, discard) in [
+            ("Add and keep editing", false, false, false),
+            ("Update and keep editing", false, true, false),
+            ("Discard and keep editing", false, false, true),
+            ("Add and exit", true, false, false),
+            ("Update and exit", true, true, false),
+            ("Discard and exit", true, false, true),
+        ] {
+            if ui
+                .add_enabled(!update || original.is_some(), egui::Button::new(label))
+                .clicked()
+            {
+                match (exit, update, discard) {
+                    (false, false, false) => mol_editor::clear_and_add(state, scene, updates),
+                    (false, true, _) => {
+                        mol_editor::clear_and_update(state, scene, updates, original.unwrap())
+                    }
+                    (false, false, true) => mol_editor::clear_editor(state, scene, updates),
+                    (true, false, false) => mol_editor::exit_and_add(state, scene, updates),
+                    (true, true, _) => {
+                        mol_editor::exit_and_update(state, scene, updates, original.unwrap())
+                    }
+                    (true, false, true) => exit_edit_mode(state, scene, updates),
+                }
+                *redraw = true;
+                ui.close();
+            }
+        }
+    });
+}
+
+fn simulation_controls(state: &mut State, ui: &mut Ui) {
+    if let Some(error) = &state.mol_editor.md.error {
+        ui.colored_label(Color32::LIGHT_RED, error);
+    }
+
+    if state.mol_editor.md.md.is_none() {
+        return;
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        section_box().show(ui, |ui| {
+            ui.add(Slider::new(&mut state.mol_editor.md.steps_per_update, 1..=100).text("IMD speed"))
+                .on_hover_text("Integration steps per update. Slower machines may run fewer steps to keep input responsive.");
+            ui.add(Slider::new(&mut state.mol_editor.md.dt, DT_MIN..=DT_MAX).logarithmic(true).text("Step (ps)"))
+                .on_hover_text("Integration timestep. Smaller steps resolve fast bond vibrations.");
+            ui.add(Slider::new(&mut state.mol_editor.md.pull_strength, 1.0..=100.0).text("Pull strength"))
+                .on_hover_text("Spring stiffness in kcal/mol/Å². Pull force is capped at 100 kcal/mol/Å.");
+        });
+
+        let indices = match &state.ui.selection {
+            Selection::AtomLig((_, i)) => vec![*i],
+            Selection::AtomsLig((_, indices)) => indices.clone(),
+            _ => Vec::new(),
+        };
+        let pinned = &state.mol_editor.md.pinned_atoms;
+        let all_pinned = !indices.is_empty() && indices.iter().all(|i| pinned.contains(i));
+        if ui.add_enabled(!indices.is_empty(), egui::Button::new(if all_pinned { "Unpin selected" } else { "Pin selected" }))
+            .on_hover_text("Hold selected atoms fixed during IMD. Pins clear after structural edits.")
+            .clicked()
+        {
+            state.mol_editor.md.set_pinned(&indices, !all_pinned);
+        }
+        if ui.add_enabled(!state.mol_editor.md.pinned_atoms.is_empty(), egui::Button::new("Unpin all")).clicked() {
+            let pinned = state.mol_editor.md.pinned_atoms.clone();
+            state.mol_editor.md.set_pinned(&pinned, false);
+        }
+
+        if let Some(md) = &state.mol_editor.md.md {
+            ui.label(format!("Time: {:.4} ps", md.time));
+        }
+        if let Some(snap) = &state.mol_editor.md.snap {
+            energy_disp(snap, ui);
+        }
+    });
+
+    ui.horizontal_wrapped(|ui| {
+        if state.mol_editor.md.running {
+            ui.label(
+                "IMD: select an atom, press M, then drag to pull. Release to let go; Esc ends the pull.",
+            );
+        }
+
+        let editor = &state.mol_editor;
+        if !editor.md.pinned_atoms.is_empty() {
+            let labels: Vec<_> = editor
+                .md
+                .pinned_atoms
+                .iter()
+                .filter_map(|&i| editor.mol.common.atoms.get(i))
+                .map(|a| a.serial_number.to_string())
+                .collect();
+            ui.label(format!("Pinned atoms: {}", labels.join(", ")));
+        }
+        if let Some((i, target)) = editor.md.pull_target
+            && let Some(atom) = editor.md.md.as_ref().and_then(|md| md.atoms.get(i))
+        {
+            let distance = (target - atom.posit).magnitude();
+            let force = (distance * editor.md.pull_strength).min(100.);
+            ui.label(format!("Pull: {distance:.2} Å · {force:.1} kcal/mol/Å"));
+        }
+    });
+}
+
 fn bond_edit_tools(
     bond_sel_is: &[usize],
     bonds: &mut [Bond],
@@ -635,6 +665,7 @@ fn bond_edit_tools(
             .on_hover_text("(Hotkey: \"1\") Change this to a single bond.")
             .clicked()
             || edit_hotkey_pressed(ui, Key::Num1)
+            || actions::take(ui, "bond_single")
         {
             new_bond_type = Some(BondType::Single);
         }
@@ -643,6 +674,7 @@ fn bond_edit_tools(
             .on_hover_text("(Hotkey: \"2\") Change this to a double bond.")
             .clicked()
             || edit_hotkey_pressed(ui, Key::Num2)
+            || actions::take(ui, "bond_double")
         {
             new_bond_type = Some(BondType::Double);
         }
@@ -651,6 +683,7 @@ fn bond_edit_tools(
             .on_hover_text("(Hotkey: \"3\") Change this to a triple bond.")
             .clicked()
             || edit_hotkey_pressed(ui, Key::Num3)
+            || actions::take(ui, "bond_triple")
         {
             new_bond_type = Some(BondType::Triple);
         }
@@ -659,6 +692,7 @@ fn bond_edit_tools(
             .on_hover_text("(Hotkey: \"4\") Change this to an aromatic.")
             .clicked()
             || edit_hotkey_pressed(ui, Key::Num4)
+            || actions::take(ui, "bond_aromatic")
         {
             new_bond_type = Some(BondType::Aromatic);
         }
@@ -802,7 +836,14 @@ fn edit_tools(
         }
     };
 
-    if selected_idxs.is_empty() {
+    let count = if bond_mode {
+        state.mol_editor.mol.common.bonds.len()
+    } else {
+        state.mol_editor.mol.common.atoms.len()
+    };
+    if selected_idxs.is_empty() || selected_idxs.iter().any(|&i| i >= count) {
+        state.ui.selection = Selection::None;
+
         return;
     }
 
@@ -822,14 +863,15 @@ fn edit_tools(
             // much room each has. By serial number, since the rebuild shifts indices.
             let sns: Vec<u32> = {
                 let mol = &state.mol_editor.mol.common;
-                match mol.bonds.get(selected_idxs[0]) {
-                    Some(bond) => [bond.atom_0, bond.atom_1]
-                        .iter()
-                        .filter_map(|i| mol.atoms.get(*i))
-                        .map(|a| a.serial_number)
-                        .collect(),
-                    None => Vec::new(),
-                }
+                let mut sns: Vec<_> = selected_idxs
+                    .iter()
+                    .filter_map(|&i| mol.bonds.get(i))
+                    .flat_map(|bond| [bond.atom_0_sn, bond.atom_1_sn])
+                    .collect();
+                sns.sort_unstable();
+                sns.dedup();
+
+                sns
             };
 
             for sn in sns {
@@ -856,12 +898,21 @@ fn edit_tools(
                     "(Hotkey: Tab) Add a Carbon atom. (Can change to other elements after)",
                 )
                 .clicked()
+                || actions::take(ui, "add")
             {
-                for atom_i in &selected_idxs {
+                let sns: Vec<_> = selected_idxs
+                    .iter()
+                    .filter_map(|&i| state.mol_editor.mol.common.atoms.get(i))
+                    .map(|a| a.serial_number)
+                    .collect();
+                for sn in sns {
+                    let Some(atom_i) = index_of_sn(&state.mol_editor.mol.common, sn) else {
+                        continue;
+                    };
                     add_atom(
                         &mut state.mol_editor.mol.common,
                         &mut scene.entities,
-                        *atom_i,
+                        atom_i,
                         Carbon,
                         BondType::Single,
                         None, // Inferred from the completed local bonding environment below.
@@ -892,12 +943,21 @@ fn edit_tools(
                     "Add a Carbon atom, and select it. Useful for quickly adding chains.",
                 )
                 .clicked()
+                || actions::take(ui, "add_select")
             {
-                for atom_i in &selected_idxs {
+                let sns: Vec<_> = selected_idxs
+                    .iter()
+                    .filter_map(|&i| state.mol_editor.mol.common.atoms.get(i))
+                    .map(|a| a.serial_number)
+                    .collect();
+                for sn in sns {
+                    let Some(atom_i) = index_of_sn(&state.mol_editor.mol.common, sn) else {
+                        continue;
+                    };
                     let new_i = add_atom(
                         &mut state.mol_editor.mol.common,
                         &mut scene.entities,
-                        *atom_i,
+                        atom_i,
                         Carbon,
                         BondType::Single,
                         None, // Inferred from the completed local bonding environment below.
@@ -950,6 +1010,7 @@ fn edit_tools(
             }
 
             ui.add_space(COL_SPACING / 2.);
+            let selected_now = actions::selected_atoms(state);
             h_count_tools(
                 state,
                 scene,
@@ -958,11 +1019,15 @@ fn edit_tools(
                 redraw,
                 &mut rebuild_md,
                 mol_i,
-                &selected_idxs,
+                &selected_now,
             );
         });
 
-        if selected_idxs.len() == 2 {
+        let selected_idxs = actions::selected_atoms(state);
+        if selected_idxs.len() == 2
+            && !state.mol_editor.mol.common.adjacency_list[selected_idxs[0]]
+                .contains(&selected_idxs[1])
+        {
             ui.add_space(COL_SPACING);
             if ui
                 .button("Add bond")
@@ -997,128 +1062,87 @@ fn edit_tools(
         &mut scene.input_settings.control_scheme,
     );
 
-    // todo: Eventually add moving multiple atoms from multi-sel.
-
-    let mut color_move = COLOR_INACTIVE;
-    let mut color_rotate = COLOR_INACTIVE;
-
-    // todo
-    match state.volatile.mol_manip.mode {
-        ManipMode::Move(_) => {
-            color_move = COLOR_ACTIVE;
-        }
-        ManipMode::Rotate(_) => {
-            color_rotate = COLOR_ACTIVE;
-        }
-        ManipMode::None => (),
+    if let Selection::AtomLig((_, i)) = state.ui.selection
+        && ui
+            .button(RichText::new("Delete atom").color(COLOR_REMOVE))
+            .on_hover_text("Delete")
+            .clicked()
+    {
+        state.mol_editor.remove_atom(i);
+        state.ui.selection = Selection::None;
+        rebuild_md = true;
     }
 
-    section_box().show(ui, |ui| {
-        if selected_idxs.len() == 1 {
-            if ui
-                .button(RichText::new("↔ Move atom").color(color_move))
-                .on_hover_text("(Hotkey: M. M or Esc to stop) Move the selected atom")
-                .clicked()
-            {
-                // dummy API interaction.
-                let mut redraw_flags = RedrawFlags {
-                    ligand: *redraw,
-                    ..Default::default()
-                };
-
-                mol_manip::set_manip(
-                    state,
-                    scene,
-                    &mut redraw_flags,
-                    &mut rebuild_md,
-                    // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
-                    ManipMode::Move((MolType::Ligand, selected_idxs[0])),
-                    engine_updates,
-                );
-                *redraw = redraw_flags.ligand;
-            }
-
-            if bond_mode && ui.button(RichText::new("⟳ Rot around bond").color(color_rotate))
-                .on_hover_text("(Hotkey: R. R or Esc to stop) Rotate the molecule around this bond")
-                .clicked() {
-
-                // Note: We allow rotating around double-bonds for the purpose of building molecules, even though they're
-                // considered to be not-rotatable in other contexts.
-                // Don't rotate around bonds that are part of a cycle (rings).
-                // todo: Cache this in `MoleculeSmall`?
-                let bond = &state.mol_editor.mol.common.bonds[selected_idxs[0]];
-                if !bond.in_a_cycle(&state.mol_editor.mol.common.adjacency_list) {
-
-                    // dummy API interaction.
-                    let mut redraw_flags = RedrawFlags {
-                        ligand: *redraw,
-                        ..Default::default()
-                    };
-
-                    set_manip(
-                        state,
-                        scene,
-                        &mut redraw_flags,
-                        &mut rebuild_md,
-                        // Atom i is used instead of the primary mode's mol i, since we're moving a single atom.
-                        ManipMode::Rotate((MolType::Ligand, selected_idxs[0])),
-                        engine_updates,
-                    );
-                    *redraw = redraw_flags.ligand;
-                }
-            }
-
-
-            // if &selected_idxs.len() == &1 {
-            let mol = &mut state.mol_editor.mol.common;
-
-            if let Selection::AtomsLig((_, atoms_i)) = &state.ui.selection
-                && atoms_i.len() == 2
-            {
-                let bond_exists = mol.adjacency_list[atoms_i[0]].contains(&atoms_i[1]);
-
-                if !bond_exists {
-                    // todo: Hotkey for this and other functionality.
-                    if ui
-                        .button(RichText::new("Create Bond").color(COLOR_ACTION))
-                        .on_hover_text(
-                            "(Hotkey: todo) Create a covalently bond between the two selected atoms",
-                        )
-                        .clicked()
-                    {
-                        let atom_0 = &mol.atoms[atoms_i[0]];
-                        let atom_1 = &mol.atoms[atoms_i[1]];
-
-                        mol.bonds.push(Bond {
-                            bond_type: BondType::Single, // todo: Allow other types
-                            atom_0_sn: atom_0.serial_number,
-                            atom_1_sn: atom_1.serial_number,
-                            atom_0: atoms_i[0],
-                            atom_1: atoms_i[1],
-                            is_backbone: false,
-                        });
-                        mol.build_adjacency_list();
-
-                        *redraw = true;
-                        rebuild_md = true;
-                    }
-                }
-            }
-
-            if let Selection::AtomLig((_, i)) = state.ui.selection && ui
-                .button(RichText::new("Del atom").color(COLOR_REMOVE))
-                .on_hover_text("(Hotkey: Delete) Delete the selected atom")
-                .clicked()
-            {
-                state.mol_editor.remove_atom(i);
-                rebuild_md = true;
-                *redraw = true;
-            }
-        }
-    });
-
     if rebuild_md {
-        sync_md(state);
+        mol_editor::relax_after_edit(state, scene, engine_updates);
+        *redraw = true;
+    }
+}
+
+fn transform_tools(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut bool,
+) {
+    let atom = matches!(state.ui.selection, Selection::AtomLig(_));
+    let rotate = actions::can_rotate(state);
+    let mut requested = None;
+    let label = if state.mol_editor.md.running {
+        "Pull atom · M"
+    } else {
+        "Move atom · M"
+    };
+    if ui
+        .add_enabled(
+            atom,
+            egui::Button::new(RichText::new(label).color(active_color(matches!(
+                state.volatile.mol_manip.mode,
+                ManipMode::Move(_)
+            )))),
+        )
+        .clicked()
+        || actions::take(ui, "move")
+    {
+        requested = Some(ManipMode::Move((MolType::Ligand, 0)));
+    }
+    if ui
+        .add_enabled(
+            rotate,
+            egui::Button::new(
+                RichText::new("Rotate bond · R").color(active_color(matches!(
+                    state.volatile.mol_manip.mode,
+                    ManipMode::Rotate(_)
+                ))),
+            ),
+        )
+        .on_disabled_hover_text("Select a bond outside a ring. Pause IMD for direct rotation.")
+        .clicked()
+        || actions::take(ui, "rotate")
+    {
+        requested = Some(ManipMode::Rotate((MolType::Ligand, 0)));
+    }
+    if let Some(mode) = requested {
+        let mut flags = RedrawFlags::default();
+        set_manip(state, scene, &mut flags, &mut false, mode, updates);
+        *redraw = true;
+    }
+    if state.volatile.mol_manip.mode != ManipMode::None {
+        ui.label(mol_manip::status(state));
+        if ui.button("Accept").clicked() {
+            mol_manip::end_transform(state, scene, false, &mut Default::default(), updates);
+            *redraw = true;
+        }
+        let cancel_label = if state.mol_editor.md.running {
+            "Release"
+        } else {
+            "Cancel"
+        };
+        if ui.button(cancel_label).clicked() {
+            mol_manip::end_transform(state, scene, true, &mut Default::default(), updates);
+            *redraw = true;
+        }
     }
 }
 
@@ -1195,10 +1219,18 @@ fn template_section(
 
         // Helper
         let mut add_t = |template: Template, abbrev, name| {
-            if ui
-                .button(abbrev)
-                .on_hover_text(format!("Add a {name} at the current selection"))
-                .clicked()
+            let ring = matches!(
+                template,
+                Template::AromaticRing | Template::Cyclohexane | Template::PentaRing
+            );
+            let available = ring || (anchor_idxs.len() == 1 && !r_aligner_is.is_empty());
+            let requested = actions::take(ui, &format!("template_{template:?}"));
+            if available
+                && (ui
+                    .button(abbrev)
+                    .on_hover_text(format!("Add a {name} at the current selection"))
+                    .clicked()
+                    || requested)
             {
                 add_from_template(
                     &mut state.mol_editor.mol.common,

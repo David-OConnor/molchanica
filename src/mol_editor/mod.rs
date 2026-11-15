@@ -66,6 +66,7 @@ pub const INIT_CAM_DIST: f32 = 20.;
 pub const STATIC_LIGHT_MOL_SIZE: f32 = 500.;
 
 const MOL_IDENT: &str = "editor_mol";
+const MAX_RELAX_ITERS: usize = 300;
 
 /// Molecules added from the editor are named e.g. "Editor 0", or "Editor | 1123 | Taurine" if
 /// PubChem knows the structure.
@@ -74,19 +75,20 @@ const EDITOR_NAME_PREFIX: &str = "Editor";
 pub struct MdEditor {
     pub md: Option<MdState>,
     pub mol_specific_params: ForceFieldParams,
-    /// Picoseconds. Combined with how often we run MD. 0.001 - 0.002 is good for preventing
-    /// the simulation from blowing up, but we have other concerns re frame rate and desired ratio.
-    /// todo: Make this customizable in the UI, and display the ratio.
+    /// Picoseconds per integration step.
     pub dt: f32,
-    /// ms. Sim time:real time ratio = dt_md x s x 10^-12 / (time_between_runs x s x 10^-3) = dt_md / time_between_runs * 10^-9)
-    // ~30fps updates. Conservative. Should vary this based on how fast it's taking for the total
-    // frame, including MD.
+    /// Milliseconds between simulation updates.
     pub time_between_runs: f32,
     pub running: bool,
     pub solvent: Solvent,
     pub snap: Option<Snapshot>,
     pub last_dt_run: Instant,
     pub rebuild_required: bool,
+    pub steps_per_update: usize,
+    pub pull_strength: f32,
+    pub pull_target: Option<(usize, Vec3F32)>,
+    pub pinned_atoms: Vec<usize>,
+    pub error: Option<String>,
 }
 
 impl Default for MdEditor {
@@ -101,6 +103,54 @@ impl Default for MdEditor {
             last_dt_run: Instant::now(),
             snap: Default::default(),
             rebuild_required: Default::default(),
+            steps_per_update: 20,
+            pull_strength: 20.,
+            pull_target: None,
+            pinned_atoms: Vec::new(),
+            error: None,
+        }
+    }
+}
+
+/// Bounded spring force, in kcal/mol/Å.
+fn pull_force(displacement: Vec3F32, strength: f32) -> Vec3F32 {
+    let force = displacement * strength;
+    let magnitude = force.magnitude();
+    if !magnitude.is_finite() {
+        return Vec3F32::new_zero();
+    }
+
+    force * (100. / magnitude.max(100.))
+}
+
+impl MdEditor {
+    fn invalidate(&mut self) {
+        self.md = None;
+        self.snap = None;
+        self.pull_target = None;
+        self.pinned_atoms.clear();
+        self.error = None;
+        self.rebuild_required = true;
+    }
+
+    pub fn set_pinned(&mut self, indices: &[usize], pinned: bool) {
+        let Some(md) = &mut self.md else {
+            return;
+        };
+
+        for &i in indices {
+            let Some(atom) = md.atoms.get_mut(i) else {
+                continue;
+            };
+
+            atom.static_ = pinned;
+            atom.vel = Vec3F32::new_zero();
+            atom.accel = Vec3F32::new_zero();
+            if pinned && !self.pinned_atoms.contains(&i) {
+                self.pinned_atoms.push(i);
+            } else if !pinned {
+                self.pinned_atoms.retain(|&index| index != i);
+            }
         }
     }
 }
@@ -178,6 +228,8 @@ impl MolEditorState {
     pub fn clear_mol(&mut self, sel: &mut Selection) {
         // todo: Change this dist; rough start.
         const DIST: f64 = 1.3;
+
+        self.md.invalidate();
 
         // Start from a fresh molecule, so nothing (identifiers, name, metadata, source file etc.)
         // carries over from the one this replaces. Keep the pocket, if any: it's what the
@@ -416,14 +468,13 @@ impl MolEditorState {
         state_ui: &mut StateUi,
         manip_mode: ManipMode,
     ) {
+        self.md.invalidate();
+        state_ui.selection = Selection::None;
         self.mol = mol.clone();
         self.mol.common.ident = MOL_IDENT.to_owned();
 
         self.mol.common.reset_posits();
         self.mol.common.update_next_sn();
-
-        // Load the initial relaxation into atom positions.
-        self.load_atom_posits_from_md(&mut scene.entities, state_ui, updates, manip_mode);
 
         // The identifiers loaded with the molecule stay until its structure changes; see
         // `refresh_smiles`.
@@ -435,9 +486,6 @@ impl MolEditorState {
         scene.input_settings.control_scheme = ControlScheme::Arc {
             center: Vec3F32::new_zero(),
         };
-
-        // Clear all entities for non-editor molecules. And render the initial relaxation
-        // from building dynamics.
 
         redraw(&mut scene.entities, self, state_ui, manip_mode, updates);
 
@@ -490,6 +538,7 @@ impl MolEditorState {
             *posit = md_atom.posit.into();
         }
 
+        self.update_h_bonds();
         redraw(entities, self, state_ui, manip_mode, updates);
     }
 
@@ -503,7 +552,7 @@ impl MolEditorState {
         manip_mode: ManipMode,
     ) {
         if !self.md.running
-            || self.md.last_dt_run.elapsed().as_micros() as f32 * 1_000. < self.md.time_between_runs
+            || self.md.last_dt_run.elapsed().as_secs_f32() * 1_000. < self.md.time_between_runs
         {
             return;
         }
@@ -512,15 +561,35 @@ impl MolEditorState {
 
         self.md.last_dt_run = Instant::now();
 
-        md.step(dev, self.md.dt, None);
+        let start = Instant::now();
+        for _ in 0..self.md.steps_per_update {
+            let forces = self.md.pull_target.and_then(|(i, target)| {
+                let atom = md.atoms.get(i)?;
+                if atom.static_ {
+                    return None;
+                }
 
-        // unsafe {
-        //     I += 1;
-        //     if I.is_multiple_of(100) {
-        //         let elapsed = self.last_dt_run.elapsed().as_micros();
-        //         println!("DT ran in: {:?}μs", elapsed);
-        //     }
-        // }
+                let force = pull_force(target - atom.posit, self.md.pull_strength);
+                let mut forces = vec![Vec3F32::new_zero(); md.atoms.len()];
+                forces[i] = force;
+
+                Some(forces)
+            });
+            md.step(dev, self.md.dt, forces);
+
+            if let Some(error) = &md.force_error {
+                self.md.error = Some(format!("IMD stopped: {error:?}"));
+                self.md.running = false;
+                self.md.pull_target = None;
+
+                break;
+            }
+
+            // Keep input responsive on slower machines.
+            if start.elapsed().as_millis() >= 12 {
+                break;
+            }
+        }
 
         // Keep the latest snapshot for the energy display, and remove the rest from memory to
         // prevent them from accumulating.
@@ -528,6 +597,23 @@ impl MolEditorState {
             self.md.snap = Some(snap);
         }
         md.snapshots.clear();
+
+        if md.atoms.iter().any(|atom| {
+            !atom.posit.x.is_finite() || !atom.posit.y.is_finite() || !atom.posit.z.is_finite()
+        }) || md.force_error.is_some()
+        {
+            self.md.error.get_or_insert_with(|| {
+                "IMD stopped: unstable geometry. Relax before restarting.".to_owned()
+            });
+            self.md.running = false;
+            self.md.pull_target = None;
+            self.md.md = None;
+            self.md.snap = None;
+            self.md.pinned_atoms.clear();
+            self.md.rebuild_required = true;
+
+            return;
+        }
 
         // Load positions from the MD state directly, and redraw. (Not from snapshots: these are
         // only taken every few steps.)
@@ -1017,6 +1103,9 @@ pub(super) fn build_dynamics(
         // We run slower time steps than in typical MD steps here, so this is OK, and may
         // provide a more realistic visualization.
         hydrogen_constraint: HydrogenConstraint::Flexible,
+        snapshot_handlers: Default::default(),
+        zero_com_drift: false,
+        barostat_cfg: None,
         ..cfg.clone()
     };
 
@@ -1334,29 +1423,103 @@ pub fn on_db_check(
 }
 
 /// Used to share this between GUI and inputs.
+pub fn ensure_dynamics(state: &mut State) -> bool {
+    if !state.mol_editor.md.rebuild_required && state.mol_editor.md.md.is_some() {
+        return true;
+    }
+
+    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.pinned_atoms.clear();
+    state.mol_editor.md.snap = None;
+    let result = build_dynamics(
+        &state.computation_device(),
+        &mut state.mol_editor,
+        &state.ff_param_set,
+        &state.to_save.md.config,
+    );
+
+    match result {
+        Ok(md) => {
+            state.mol_editor.md.md = Some(md);
+            state.mol_editor.md.rebuild_required = false;
+            state.mol_editor.md.error = None;
+            state.mol_editor.md.last_dt_run = Instant::now();
+
+            true
+        }
+        Err(error) => {
+            let message = format!("Unable to set up editor dynamics: {error:?}");
+            handle_err(&mut state.ui, message.clone());
+            state.mol_editor.md.error = Some(message);
+            state.mol_editor.md.md = None;
+            state.mol_editor.md.running = false;
+            state.mol_editor.md.rebuild_required = true;
+
+            false
+        }
+    }
+}
+
+pub fn relax(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    state.mol_editor.md.pull_target = None;
+    if !ensure_dynamics(state) {
+        return;
+    }
+
+    let dev = state.computation_device();
+    let md = state.mol_editor.md.md.as_mut().unwrap();
+    md.minimize_energy(&dev, MAX_RELAX_ITERS, None);
+    let error = md
+        .force_error
+        .as_ref()
+        .map(|error| format!("Unable to relax geometry: {error:?}"))
+        .or_else(|| {
+            md.atoms
+                .iter()
+                .any(|a| !a.posit.magnitude_squared().is_finite())
+                .then(|| "Unable to relax geometry: non-finite atom positions.".to_owned())
+        });
+    if let Some(message) = error {
+        handle_err(&mut state.ui, message.clone());
+        state.mol_editor.md.error = Some(message);
+        state.mol_editor.md.md = None;
+        state.mol_editor.md.snap = None;
+        state.mol_editor.md.pinned_atoms.clear();
+        state.mol_editor.md.running = false;
+        state.mol_editor.md.rebuild_required = true;
+
+        return;
+    }
+
+    md.snapshots.clear();
+    state.mol_editor.md.snap = None;
+    state.mol_editor.load_atom_posits_from_md(
+        &mut scene.entities,
+        &state.ui,
+        updates,
+        state.volatile.mol_manip.mode,
+    );
+}
+
+pub fn relax_after_edit(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    crate::mol_manip::discard_editor_transform(state, scene);
+    state.mol_editor.mol.common.build_adjacency_list();
+    state.mol_editor.mol.update_characterization();
+    state.mol_editor.refresh_smiles();
+    state.mol_editor.md.rebuild_required = true;
+    relax(state, scene, updates);
+}
+
 pub fn sync_md(state: &mut State) {
     // This runs after edits, some of which change the structure.
     state.mol_editor.refresh_smiles();
 
+    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.pinned_atoms.clear();
+    state.mol_editor.md.rebuild_required = true;
+
     if state.mol_editor.md.running {
-        // todo: Ideally don't rebuild the whole dynamics, for performance reasons.
-        let build_result = build_dynamics(
-            &state.computation_device(),
-            &mut state.mol_editor,
-            &state.ff_param_set,
-            &state.to_save.md.config,
-        );
-        match build_result {
-            Ok(d) => {
-                state.mol_editor.md.md = Some(d);
-                state.mol_editor.md.rebuild_required = false;
-            }
-            Err(e) => {
-                state.mol_editor.md.md = None;
-                state.mol_editor.md.rebuild_required = true;
-                eprintln!("Problem setting up dynamics for the editor: {e:?}");
-            }
-        }
+        ensure_dynamics(state);
     } else {
         // The MD build will be triggered the next time MD is started or Relax is clicked. Drop the
         // old state now: its atom count and topology no longer describe the edited molecule.

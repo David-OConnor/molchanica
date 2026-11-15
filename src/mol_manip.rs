@@ -535,6 +535,27 @@ pub(crate) fn restore_pose(state: &mut State, pose: &Pose, redraw: &mut RedrawFl
 }
 
 pub(crate) fn apply_values(state: &mut State, before: &Pose, values: &TransformValues) -> bool {
+    if before.operating_mode == OperatingMode::MolEditor
+        && state.mol_editor.md.running
+        && let ManipMode::Move((MolType::Ligand, i)) = before.mode
+    {
+        let mol = &state.mol_editor.mol.common;
+        if state.mol_editor.md.pinned_atoms.contains(&i)
+            || mol.ident != before.object_key
+            || mol.atom_posits.len() != before.positions.len()
+            || Pose::topology(mol) != before.topology
+        {
+            return false;
+        }
+        let Some(position) = before.positions.get(i) else {
+            return false;
+        };
+
+        state.mol_editor.md.pull_target = Some((i, (*position + values.translation).into()));
+
+        return true;
+    }
+
     let Some(mol) = target_mol_mut(state, before.mode, before.operating_mode) else {
         return false;
     };
@@ -732,6 +753,10 @@ fn plane_hit(scene: &Scene, cursor: (f32, f32), pivot: Vec3, normal: Vec3) -> Op
 }
 
 pub(crate) fn begin_drag(state: &mut State, scene: &Scene, handle: Option<Handle>) {
+    if state.volatile.operating_mode == OperatingMode::MolEditor && state.mol_editor.md.running {
+        state.volatile.mol_manip.session = None;
+    }
+
     if state.volatile.mol_manip.mode == ManipMode::None || !ensure_session(state) {
         return;
     }
@@ -754,7 +779,14 @@ pub(crate) fn begin_drag(state: &mut State, scene: &Scene, handle: Option<Handle
         _ => (),
     }
     let before = &manip.session.as_ref().unwrap().before;
-    manip.pivot = Some(before.pivot().into());
+    manip.pivot = Some(match before.mode {
+        ManipMode::Move((MolType::Ligand, i))
+            if state.volatile.operating_mode == OperatingMode::MolEditor =>
+        {
+            before.positions[i].into()
+        }
+        _ => before.pivot().into(),
+    });
 }
 
 pub fn handle_mol_manip_in_plane(
@@ -888,6 +920,11 @@ pub fn handle_mol_manip_in_out(
 }
 
 pub(crate) fn finish_drag(state: &mut State, redraw: &mut RedrawFlags) {
+    state.mol_editor.md.pull_target = None;
+    if state.volatile.operating_mode == OperatingMode::MolEditor && state.mol_editor.md.running {
+        state.volatile.mol_manip.session = None;
+    }
+
     if let Some(session) = state.volatile.mol_manip.session.take()
         && session.before.mode == state.volatile.mol_manip.mode
         && session.before.operating_mode == state.volatile.operating_mode
@@ -951,7 +988,14 @@ pub(crate) fn end_transform(
     updates: &mut EngineUpdates,
 ) {
     let mode = state.volatile.mol_manip.mode;
-    if cancel {
+    if mode == ManipMode::None {
+        return;
+    }
+
+    let imd_pull = state.volatile.operating_mode == OperatingMode::MolEditor
+        && state.mol_editor.md.running
+        && matches!(mode, ManipMode::Move((MolType::Ligand, _)));
+    if cancel && !imd_pull {
         if let Some(session) = state.volatile.mol_manip.session.take()
             && !session.before.matches(state)
         {
@@ -969,9 +1013,26 @@ pub(crate) fn end_transform(
     state.ui.left_click_down = false;
     scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
     finish_pocket(state, scene, mode, redraw, updates);
-    if state.volatile.operating_mode == OperatingMode::MolEditor {
+    state.mol_editor.md.pull_target = None;
+    if state.volatile.operating_mode == OperatingMode::MolEditor && !imd_pull {
         crate::mol_editor::sync_md(state);
     }
+}
+
+pub(crate) fn discard_editor_transform(state: &mut State, scene: &mut Scene) {
+    if state.volatile.mol_manip.mode != ManipMode::None {
+        scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
+    }
+
+    let manip = &mut state.volatile.mol_manip;
+    manip.mode = ManipMode::None;
+    manip.session = None;
+    manip.pivot = None;
+    manip.dragged = None;
+    manip.constraint = Constraint::Free;
+    manip.numeric.clear();
+    state.mol_editor.md.pull_target = None;
+    state.ui.left_click_down = false;
 }
 
 pub(crate) fn has_preview(state: &State) -> bool {
@@ -1161,12 +1222,14 @@ pub fn set_manip(
     };
     if previous != ManipMode::None {
         end_transform(state, scene, false, redraw, updates);
-        *rebuild_md_editor = op == OperatingMode::MolEditor;
+        *rebuild_md_editor = op == OperatingMode::MolEditor && !state.mol_editor.md.running;
     }
     if mode == ManipMode::None || mode == previous {
         return;
     }
-    if state.volatile.md_local.running || state.mol_editor.md.running {
+    let imd_move =
+        op == OperatingMode::MolEditor && matches!(mode, ManipMode::Move((MolType::Ligand, _)));
+    if state.volatile.md_local.running || (state.mol_editor.md.running && !imd_move) {
         return;
     }
 

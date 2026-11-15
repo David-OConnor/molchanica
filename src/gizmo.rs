@@ -448,6 +448,53 @@ pub(crate) fn update_overlays(state: &mut State, scene: &mut Scene, ctx: &egui::
     if let Some(molecule) = molecule {
         scene.vector_overlays.push(molecule);
     }
+    if state.volatile.operating_mode == OperatingMode::MolEditor {
+        scene.vector_overlays.push(imd_overlay(state, scene));
+    }
+}
+
+fn imd_overlay(state: &State, scene: &Scene) -> VectorOverlay {
+    let scale = state.volatile.mol_manip.pixels_per_point;
+    let (x, y, w, h) = viewport_points(scene, scale);
+    let project = |position| {
+        let (visible, ndc) = scene.camera.in_view(position);
+
+        visible.then_some(((ndc.0 * 0.5 + 0.5) * w, (0.5 - ndc.1 * 0.5) * h))
+    };
+
+    let mut overlay = overlay_at(scene, scale, (x, y));
+    let editor = &state.mol_editor;
+    for &i in &editor.md.pinned_atoms {
+        if let Some(atom) = editor.mol.common.atom_posits.get(i)
+            && let Some(center) = project((*atom).into())
+        {
+            overlay.primitives.push(OverlayPrimitive::Circle {
+                center,
+                radius: 10.,
+                fill: None,
+                stroke: Some(OverlayStroke::new(2., (80, 220, 255, 255))),
+            });
+        }
+    }
+
+    if let Some((i, target)) = editor.md.pull_target
+        && let Some(atom) = editor.mol.common.atom_posits.get(i)
+        && let (Some(start), Some(end)) = (project((*atom).into()), project(target))
+    {
+        overlay.primitives.push(OverlayPrimitive::Line {
+            start,
+            end,
+            stroke: OverlayStroke::new(2., HIGHLIGHT),
+        });
+        overlay.primitives.push(OverlayPrimitive::Circle {
+            center: end,
+            radius: 5.,
+            fill: None,
+            stroke: Some(OverlayStroke::new(2., HIGHLIGHT)),
+        });
+    }
+
+    overlay
 }
 
 fn axis_color(axis: Axis) -> OverlayColor {

@@ -581,7 +581,7 @@ pub fn frame_mol(
 }
 
 /// The camera distance from a sphere's center at which all of it fits in view.
-fn frame_dist(cam: &Camera, radius: f32) -> f32 {
+pub(crate) fn frame_dist(cam: &Camera, radius: f32) -> f32 {
     let half_y = cam.fov_y / 2.;
     let half_x = if cam.aspect > 0. {
         (half_y.tan() * cam.aspect).atan()

@@ -194,9 +194,13 @@ pub fn handle_input(
     engine_updates: &mut EngineUpdates,
     scene: &mut Scene,
 ) {
+    if ui.ctx().memory(|memory| memory.top_modal_layer().is_some()) {
+        return;
+    }
+
     // EGUI records Tab focus navigation before this handler runs. Clear it before
     // drawing any widgets, while still handling Tab over the GUI and the scene.
-    if ui.input(|input| input.key_pressed(Key::Tab)) {
+    if ui.input(|input| input.key_pressed(Key::Tab)) && !ui.ctx().text_edit_focused() {
         ui.ctx()
             .memory_mut(|memory| memory.move_focus(FocusDirection::None));
 

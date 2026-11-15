@@ -288,13 +288,16 @@ pub fn update_file_dialogs(
     if let Some(path) = &state.volatile.dialogs.load.take_picked() {
         if let Err(e) = match state.volatile.operating_mode {
             OperatingMode::Primary => state.open_file(path, scene, engine_updates),
-            OperatingMode::MolEditor => state.mol_editor.open_molecule(
-                path,
-                scene,
-                engine_updates,
-                &mut state.ui,
-                state.volatile.mol_manip.mode,
-            ),
+            OperatingMode::MolEditor => {
+                crate::mol_manip::discard_editor_transform(state, scene);
+                state.mol_editor.open_molecule(
+                    path,
+                    scene,
+                    engine_updates,
+                    &mut state.ui,
+                    state.volatile.mol_manip.mode,
+                )
+            }
             OperatingMode::ProteinEditor => unimplemented!(),
         } {
             handle_err(&mut state.ui, e.to_string());
