@@ -245,7 +245,7 @@ pub(crate) fn undo_redo(
     redraw: &mut RedrawFlags,
     updates: &mut EngineUpdates,
 ) {
-    if state.volatile.md_local.running || state.mol_editor.md.running {
+    if state.volatile.md_local.running() || state.mol_editor.md.running {
         return;
     }
     if state.volatile.mol_manip.mode != ManipMode::None {
@@ -455,7 +455,7 @@ pub(crate) fn show(
     ui.collapsing("Edit / history", |ui| {
         let idle = !state.ui.left_click_down
             && !mol_manip::has_preview(state)
-            && !state.volatile.md_local.running
+            && !state.volatile.md_local.running()
             && !state.mol_editor.md.running;
         ui.horizontal_wrapped(|ui| {
             if ui

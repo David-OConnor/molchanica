@@ -18,7 +18,7 @@ use lin_alg::{f32::Vec3 as Vec3F32, f64::Vec3};
 use mol_defs::molecules::{peptide::MoleculePeptide, small::MoleculeSmall};
 
 use crate::{
-    md::{filter_peptide_atoms, post_run_cleanup, run_dynamics_blocking},
+    md::{filter_peptide_atoms, run_dynamics_blocking},
     state::State,
 };
 
@@ -132,8 +132,6 @@ pub fn dock(
     //     &mut state.volatile.md_local.viewer.peptide_selected,
     // )?;
 
-    state.volatile.md_local.start = Some(Instant::now());
-    // state.volatile.md_local.running = true;
 
     // todo: We may opt for a higher-than-normal DT here.
     let dt = 0.002;
@@ -147,8 +145,7 @@ pub fn dock(
     // run_dynamics_blocking(&mut md_state, &state.dev, dt, n_steps);
 
     // state.volatile.md_local.mol_dynamics = Some(md_state);
-    // This cleanup fn requires state mol dynamics to be loaded.
-    post_run_cleanup(state, scene, engine_updates);
+    // todo: Load output, as `md::poll_dynamics_run` does.
 
     Ok(())
 }

@@ -303,10 +303,9 @@ pub fn launch_md(state: &mut State) {
         "xTB",
         Some(format!("{} steps", prepared.input.num_steps)),
     );
-    state.volatile.md_local.running = false;
+    state.volatile.md_local.run = None;
     state.volatile.md_local.launching = false;
     state.volatile.md_local.mol_dynamics = None;
-    state.volatile.md_local.computation = None;
 
     thread::spawn(move || {
         let start = Instant::now();

@@ -4,7 +4,14 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     fmt::{Display, Formatter},
-    sync::Arc,
+    io,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -39,29 +46,53 @@ pub mod viewer;
 // Set this wide to take into account motion.
 pub const STATIC_ATOM_DIST_THRESH: f64 = 14.;
 
-// Run this many MD steps per frame. This is used to balance MD time with the rest of the application.
-// A higher value will reduce the overall MD computation time,
-// but make the UI laggier. If this is >= the number of steps, the whole MD operation will block
-// the rest of the program. For initial test, a value above ~10 doesn't seem to
-// noticeably increase total computation time. e.g. the frame time is small compared to this many
-// MD steps for a small molecule + water sim.
-const MD_STEPS_PER_APPLICATION_FRAME: usize = 10;
-
 // pub type MolsForMd = (FfMolType, &MoleculeCommon, usize);
+
+/// What a Dynamics run's worker returns.
+struct RunResult {
+    md: MdState,
+    elapsed: Duration,
+    /// E.g. a force error.
+    stop_error: Option<String>,
+    save_error: Option<io::Error>,
+}
+
+/// A Dynamics-backend run, on a worker thread. The UI loop pauses when the window is unfocused or
+/// minimized; this lets the run continue then. Dropping this cancels the run.
+pub struct DynamicsRun {
+    receiver: Receiver<RunResult>,
+    cancel: Arc<AtomicBool>,
+    step: Arc<AtomicUsize>,
+    pub num_steps: u32,
+    output_dir: PathBuf,
+    /// For the computation status display.
+    _computation: ComputationGuard,
+}
+
+impl DynamicsRun {
+    pub fn step(&self) -> usize {
+        self.step.load(Ordering::Relaxed)
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Drop for DynamicsRun {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
 
 #[derive(Default)]
 pub struct MdStateLocal {
-    /// MD state, for when running using the Dynamics engine.
+    /// MD state, for when running using the Dynamics engine. `None` during a run; the worker owns
+    /// it then.
     pub mol_dynamics: Option<MdState>,
     /// This flag lets us defer launch by a frame, so we can display a flag.
     pub launching: bool,
-    pub running: bool,
-    /// Held while `running`, for the computation status display. This MD runs a few steps each
-    /// frame on the UI thread, instead of on a worker thread that could hold it.
-    pub computation: Option<ComputationGuard>,
-    pub start: Option<Instant>,
-    pub run_steps_and_dt: (u32, f32),
-    pub run_output_dir: Option<std::path::PathBuf>,
+    pub run: Option<DynamicsRun>,
     // todo: Consider if you want a dedicated MD playback operating mode. For now, this flag
     /// If true, render the molecules from this struct, instead of primary state molecules.
     pub draw_md_mols: bool,
@@ -79,6 +110,11 @@ pub struct MdStateLocal {
 }
 
 impl MdStateLocal {
+    /// A Dynamics-backend run is in progress.
+    pub fn running(&self) -> bool {
+        self.run.is_some()
+    }
+
     /// todo: WIP, regarding how we pass in atoms and molecules.
     pub fn replace_snaps(&mut self, snaps: Vec<Arc<Snapshot>>) {
         self.draw_md_mols = true;
@@ -109,39 +145,131 @@ impl MdStateLocal {
     }
 }
 
-/// For our non-blocking workflow. Run this once an MD run using the `Dynamics` engine is complete.
-/// Loads the saved trajectory, as for GROMACS.
-pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    let md = &mut state.volatile.md_local;
+/// Runs `md` on a worker thread. See [`DynamicsRun`].
+fn start_run(state: &mut State, md: MdState, output_dir: PathBuf, (num_steps, dt): (u32, f32)) {
+    let dev = state.computation_device();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let step = Arc::new(AtomicUsize::new(md.step_count));
+    let (tx, receiver) = mpsc::channel();
 
-    let Some(md_state) = &mut md.mol_dynamics else {
-        eprintln!("Can't run MD cleanup; MD state is None");
+    let worker_dir = output_dir.clone();
+    let worker_cancel = cancel.clone();
+    let worker_step = step.clone();
+    thread::spawn(move || {
+        let result = run_worker(
+            md,
+            &dev,
+            num_steps as usize,
+            dt,
+            &worker_dir,
+            &worker_cancel,
+            &worker_step,
+        );
+        // The receiver is gone if the run was abandoned.
+        let _ = tx.send(result);
+    });
+
+    let computation = state.volatile.ongoing_computations.start(
+        ComputationType::MolecularDynamics,
+        "Dynamics",
+        Some(format!("{num_steps} steps")),
+    );
+
+    let md_local = &mut state.volatile.md_local;
+    md_local.mol_dynamics = None;
+    md_local.run = Some(DynamicsRun {
+        receiver,
+        cancel,
+        step,
+        num_steps,
+        output_dir,
+        _computation: computation,
+    });
+}
+
+/// Steps until done, cancelled, or a force error; then saves output.
+fn run_worker(
+    mut md: MdState,
+    dev: &ComputationDevice,
+    num_steps: usize,
+    dt: f32,
+    output_dir: &std::path::Path,
+    cancel: &AtomicBool,
+    step: &AtomicUsize,
+) -> RunResult {
+    let start = Instant::now();
+    let mut stop_error = None;
+
+    // Raw CUDA calls in `dynamics`, e.g. pinned host allocation, need the context current here.
+    #[cfg(feature = "cuda")]
+    if let ComputationDevice::Gpu(stream) = dev
+        && let Err(error) = stream.context().bind_to_thread()
+    {
+        stop_error = Some(format!(
+            "MD stopped: Unable to bind the CUDA context: {error:?}"
+        ));
+    }
+
+    while stop_error.is_none() && md.step_count < num_steps && !cancel.load(Ordering::Relaxed) {
+        md.step(dev, dt, None);
+        step.store(md.step_count, Ordering::Relaxed);
+
+        if let Err(error) = md.check_force_error() {
+            stop_error = Some(format!("MD stopped: {error}"));
+        }
+    }
+
+    if md.step_count >= num_steps
+        && let Ok(time) = md.computation_time()
+    {
+        println!(
+            "\nMD computation time: {time} \n Total run time: {} ms",
+            start.elapsed().as_millis()
+        );
+    }
+
+    let output_error = md.finish_run_output().err();
+    let frame_error = runs::save_final_frame(output_dir, &md, dt).err();
+
+    RunResult {
+        md,
+        elapsed: start.elapsed(),
+        stop_error,
+        save_error: output_error.or(frame_error),
+    }
+}
+
+/// Loads a finished Dynamics run's saved trajectory, as for GROMACS. Run each frame.
+pub fn poll_dynamics_run(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    let received = state
+        .volatile
+        .md_local
+        .run
+        .as_ref()
+        .map(|run| run.receiver.try_recv());
+
+    let result = match received {
+        None | Some(Err(TryRecvError::Empty)) => return,
+        Some(Err(TryRecvError::Disconnected)) => {
+            state.volatile.md_local.run = None;
+            handle_err(
+                &mut state.ui,
+                "The Dynamics MD worker stopped without returning a result.".into(),
+            );
+
+            return;
+        }
+        Some(Ok(result)) => result,
+    };
+
+    let Some(run) = state.volatile.md_local.run.take() else {
         return;
     };
 
-    // if md.mol_dynamics.is_none() {
-    //     // if md.mol_dynamics.is_none() {
-    //     eprintln!("Can't run MD cleanup; MD state is None");
-    //     return;
-    // };
+    state.volatile.md_local.mol_dynamics = Some(result.md);
+    let load_info = runs::show_dynamics_output(state, scene, updates, &run.output_dir);
 
-    md.running = false;
-    md.computation = None;
-    let elapsed = md.start.take().map(|start| start.elapsed());
-
-    let mut save_error = md_state.finish_run_output().err();
-    let output = md.run_output_dir.take();
-    if let Some(dir) = &output {
-        let frame_error = runs::save_final_frame(dir, md_state, md.run_steps_and_dt.1).err();
-        save_error = save_error.or(frame_error);
-    }
-
-    let load_info = match &output {
-        Some(dir) => runs::show_dynamics_output(state, scene, updates, dir),
-        None => Ok(None),
-    };
-
-    match (save_error, load_info) {
+    match (result.save_error, load_info) {
         (Some(error), _) => handle_err(
             &mut state.ui,
             format!("Dynamics finished. Error saving output: {error}"),
@@ -153,18 +281,18 @@ pub fn post_run_cleanup(state: &mut State, scene: &mut Scene, updates: &mut Engi
         (None, Ok(load_info)) => handle_success(
             &mut state.ui,
             format!(
-                "Dynamics finished{}{}{}",
-                elapsed
-                    .map(|e| format!(" in {}", format_elapsed(e)))
-                    .unwrap_or_default(),
-                output
-                    .map(|dir| format!(" · {}", dir.display()))
-                    .unwrap_or_default(),
+                "Dynamics finished in {} · {}{}",
+                format_elapsed(result.elapsed),
+                run.output_dir.display(),
                 load_info
                     .map(|info| format!(". {info}"))
                     .unwrap_or_default()
             ),
         ),
+    }
+
+    if let Some(error) = result.stop_error {
+        handle_err(&mut state.ui, error);
     }
 }
 
@@ -769,13 +897,8 @@ impl State {
     ) {
         let md = &mut self.volatile.md_local;
         md.clear_snaps(&mut scene.entities, redraw);
-        if md.running {
-            if let Some(sim) = &mut md.mol_dynamics {
-                sim.snapshots = Vec::new();
-            }
-        } else {
-            md.mol_dynamics = None;
-        }
+        // A run in progress owns its state on the worker, and keeps no in-memory snapshots.
+        md.mol_dynamics = None;
         self.trajectories
             .retain(|traj| matches!(traj.source, trajectory::TrajectorySource::File(_)));
         for traj in &mut self.trajectories {
@@ -783,50 +906,6 @@ impl State {
             traj.ui_active = false;
         }
         updates.entities = graphics::EntityUpdate::All;
-    }
-
-    /// Run MD for a single step if ready, and update atom positions immediately after. Blocks for
-    /// a fixed number of steps only; intended to be run each frame until complete.
-    pub fn md_step(&mut self, scene: &mut Scene, engine_updates: &mut EngineUpdates) {
-        if !self.volatile.md_local.running {
-            return;
-        }
-
-        let dev = self.computation_device();
-        let Some(md) = &mut self.volatile.md_local.mol_dynamics else {
-            return;
-        };
-
-        let (num_steps, dt) = self.volatile.md_local.run_steps_and_dt;
-        let gfnff = md.cfg.ff_family == ForceFieldFamily::Gfnn;
-        let frame_start = Instant::now();
-        let steps = if gfnff {
-            usize::MAX
-        } else {
-            MD_STEPS_PER_APPLICATION_FRAME
-        };
-        for _ in 0..steps {
-            if md.step_count >= num_steps as usize {
-                println!(
-                    "\nMD computation time: {} \n Total run time: {} ms",
-                    md.computation_time().unwrap(),
-                    self.volatile.md_local.start.unwrap().elapsed().as_millis()
-                );
-
-                post_run_cleanup(self, scene, engine_updates);
-                break;
-            }
-            md.step(&dev, dt, None);
-            if let Err(error) = md.check_force_error() {
-                post_run_cleanup(self, scene, engine_updates);
-                handle_err(&mut self.ui, format!("MD stopped: {error}"));
-                break;
-            }
-
-            if gfnff && frame_start.elapsed() >= Duration::from_millis(8) {
-                break;
-            }
-        }
     }
 }
 
@@ -1097,8 +1176,8 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
                         )?;
                         Ok(dir)
                     });
-                match saved {
-                    Ok(dir) => state.volatile.md_local.run_output_dir = Some(dir),
+                let output_dir = match saved {
+                    Ok(dir) => dir,
                     Err(error) => {
                         handle_err(
                             &mut state.ui,
@@ -1107,23 +1186,15 @@ pub fn launch_md(state: &mut State, run: bool, fast_init: bool) {
 
                         return;
                     }
-                }
+                };
                 // Frames load from the saved trajectory after the run, as for GROMACS. After
                 // saving the inputs, so they keep the configured interval, e.g. for xTB.
                 md.cfg.snapshot_handlers.memory = None;
 
-                state.volatile.md_local.run_steps_and_dt = settings;
-                state.volatile.md_local.start = Some(Instant::now());
-                state.volatile.md_local.running = true;
-
-                state.volatile.md_local.computation =
-                    Some(state.volatile.ongoing_computations.start(
-                        ComputationType::MolecularDynamics,
-                        "Dynamics",
-                        Some(format!("{} steps", state.to_save.md.num_steps)),
-                    ));
+                start_run(state, md, output_dir, settings);
+            } else {
+                state.volatile.md_local.mol_dynamics = Some(md);
             }
-            state.volatile.md_local.mol_dynamics = Some(md);
         }
         Err(e) => handle_err(&mut state.ui, e.descrip),
     }

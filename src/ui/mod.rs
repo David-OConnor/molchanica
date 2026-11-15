@@ -314,6 +314,11 @@ fn draw_cli(
 ) {
     ui.horizontal_wrapped(|ui| {
         ui.label("Out: ");
+        if button!(ui, "Clear", COLOR_ACTION, "Clear the output text.").clicked() {
+            state.ui.cmd_line_output.clear();
+            state.ui.cmd_line_out_is_err = false;
+        }
+
         let color = if state.ui.cmd_line_out_is_err {
             COLOR_OUT_ERROR
         } else {
@@ -1208,8 +1213,8 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     handle_redraw(state, scene, &mut redraw, &mut updates);
 
-    // Run one or more MD steps, if a MD computation is in progress.
-    state.md_step(scene, &mut updates);
+    // Load a finished Dynamics run's output. The run itself is on a worker thread.
+    crate::md::poll_dynamics_run(state, scene, &mut updates);
     if scene_restored && state.volatile.md_local.draw_md_mols {
         crate::md::viewer::draw_mols(state, scene, &mut updates);
     }
@@ -1229,8 +1234,11 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         ui.request_repaint_after(prefs_check_delay);
     }
 
-    if state.volatile.md_local.running || state.mol_editor.md.running {
+    if state.mol_editor.md.running {
         ui.request_repaint();
+    } else if state.volatile.md_local.running() {
+        // For the progress display, and to poll for completion.
+        ui.request_repaint_after(Duration::from_millis(100));
     }
 
     crate::edit_history::record_editor(state, editor_before, history_revision);

@@ -15,7 +15,7 @@ use crate::{
     drawing::EntityClass,
     external_tools::{self, Tool},
     md,
-    md::{MdBackend, launch_md, post_run_cleanup, start_md_energy_computation},
+    md::{MdBackend, launch_md, start_md_energy_computation},
     prefs::ToSave,
     state::State,
     ui::{
@@ -44,7 +44,7 @@ pub fn md_setup(
     if state.volatile.md_local.launching {
         state.volatile.md_local.launching = false;
         launch_md(state, true, false);
-    } else if state.volatile.md_local.running {
+    } else if state.volatile.md_local.running() {
         // This is spammed each frame, so don't print, which handle_success does.
         state.ui.cmd_line_output = "MD Running...".to_string();
         state.ui.cmd_line_out_is_err = false;
@@ -146,10 +146,6 @@ pub fn md_setup(
                 state.volatile.md_local.gromacs_setup = Default::default();
                 state.volatile.md_local.xtb_options = Default::default();
 
-                if state.force_fields.family == ForceFieldFamily::Gfnn {
-                    state.to_save.md.dt = state.to_save.md.dt.min(0.0005);
-                }
-
                 state.ui.md.sync(&state.to_save.md.config, state.to_save.md.dt);
             }
 
@@ -165,14 +161,6 @@ pub fn md_setup(
                 // engine_updates.entities = EntityUpdate::Classes(vec![EntityClass::WaterModel as u32]);
                 updates.entities = EntityUpdate::All;
             }
-
-            run = button!(
-                ui,
-                "Run",
-                COLOR_ACTION,
-                "Run the current MD setup."
-            )
-                .clicked();
 
             ui.add_space(COL_SPACING / 2.);
             force_field_cfg(state, ui);
@@ -229,26 +217,22 @@ pub fn md_setup(
                 start_md_energy_computation(state);
             }
 
-            if state.volatile.md_local.running {
+            if let Some(run) = &state.volatile.md_local.run {
                 if ui
                     .button(RichText::new("Abort").color(Color32::LIGHT_RED))
                     .on_hover_text("Stop the in-progress simulation")
                     .clicked()
                 {
-                    post_run_cleanup(state, scene, updates);
+                    // The worker stops, saves output, and returns; it loads then, as on completion.
+                    run.cancel();
                 }
 
-                if let Some(md) = &state.volatile.md_local.mol_dynamics {
-                    let count = (md.step_count / 100) * 100;
+                let count = (run.step() / 100) * 100;
 
-                    ui.label(
-                        RichText::new(format!(
-                            "MD running. Step {} of {}",
-                            count, state.volatile.md_local.run_steps_and_dt.0
-                        ))
-                            .color(COLOR_HIGHLIGHT),
-                    );
-                }
+                ui.label(
+                    RichText::new(format!("MD running. Step {count} of {}", run.num_steps))
+                        .color(COLOR_HIGHLIGHT),
+                );
             }
 
             if let Some(run) = &state.volatile.thread_receivers.xtb_md {
@@ -431,9 +415,20 @@ fn using_saved_inputs(state: &State) -> bool {
 
 fn run_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
     let running = md::runs::running(state);
+    let mut run = false;
 
     ui.horizontal(|ui| {
         ui.add_enabled_ui(!running, |ui| {
+            run = button!(
+                ui,
+                "Run",
+                COLOR_ACTION,
+                "Run the current MD setup."
+            )
+                .clicked();
+
+            ui.add_space(COL_SPACING);
+
             let picked = ComboBox::from_id_salt("recent_md_runs")
                 .selected_text("Recent MD runs")
                 .height(360.)
@@ -629,12 +624,10 @@ fn preparation_cfg(state: &mut State, ui: &mut Ui) {
 }
 
 pub(super) fn time_step(state: &mut State, ui: &mut Ui) {
-    let native_xtb = state.to_save.md.backend == MdBackend::xTb;
-    let dynamics_gfnff = state.force_fields.family == ForceFieldFamily::Gfnn && !native_xtb;
-    let help = if native_xtb {
+    let help = if state.to_save.md.backend == MdBackend::xTb {
         "xTB time step in ps. xTB recommends 0.002 ps with a hydrogen mass of 4 u and SHAKE off."
-    } else if dynamics_gfnff {
-        "Dynamics with GFN-FF uses at most 0.0005 ps."
+    } else if state.force_fields.family == ForceFieldFamily::Gfnn {
+        "Simulation time step in picoseconds. GFN-FF H bonds are flexible; large steps may be unstable."
     } else {
         "Simulation time step in picoseconds."
     };
@@ -646,10 +639,7 @@ pub(super) fn time_step(state: &mut State, ui: &mut Ui) {
         .changed()
         && let Ok(dt) = state.ui.md.dt_input.parse::<f32>()
     {
-        state.to_save.md.dt = if dynamics_gfnff { dt.min(0.0005) } else { dt };
-        if dynamics_gfnff && dt > 0.0005 {
-            state.ui.md.dt_input = state.to_save.md.dt.to_string();
-        }
+        state.to_save.md.dt = dt;
     }
 }
 

@@ -1232,7 +1232,7 @@ pub fn set_manip(
     }
     let imd_move =
         op == OperatingMode::MolEditor && matches!(mode, ManipMode::Move((MolType::Ligand, _)));
-    if state.volatile.md_local.running || (state.mol_editor.md.running && !imd_move) {
+    if state.volatile.md_local.running() || (state.mol_editor.md.running && !imd_move) {
         return;
     }
 

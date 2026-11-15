@@ -617,7 +617,7 @@ pub fn close_traj(
     if trajectory.ui_active || showing_frames {
         let md = &mut state.volatile.md_local;
         md.clear_snaps(&mut scene.entities, redraw);
-        if !md.running {
+        if !md.running() {
             md.mol_dynamics = None;
         }
         updates.entities = graphics::EntityUpdate::All;

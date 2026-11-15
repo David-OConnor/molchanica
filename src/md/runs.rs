@@ -60,7 +60,7 @@ impl RunInputs {
 
 pub fn running(state: &State) -> bool {
     let md = &state.volatile.md_local;
-    md.running
+    md.running()
         || md.launching
         || state.volatile.thread_receivers.xtb_md.is_some()
         || state.volatile.thread_receivers.gromacs_md_avail.is_some()

@@ -702,7 +702,7 @@ impl Comparison {
         undo: bool,
     ) -> Result<(), String> {
         if state.volatile.operating_mode != OperatingMode::Primary
-            || state.volatile.md_local.running
+            || state.volatile.md_local.running()
             || state.volatile.md_local.draw_md_mols
         {
             return Err(
