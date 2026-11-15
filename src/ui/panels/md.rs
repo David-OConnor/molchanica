@@ -10,6 +10,7 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 use mol_defs::molecules::MolType;
 
+use crate::ui::COLOR_AMBER;
 use crate::{
     button,
     drawing::EntityClass,
@@ -52,7 +53,7 @@ pub fn md_setup(
 
     let mut run = false;
     misc::section_box().show(ui, |ui| {
-        run_picker(state, scene, updates, ui);
+        run = run_picker(state, scene, updates, ui);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("MD setup:").color(Color32::WHITE));
 
@@ -206,17 +207,6 @@ pub fn md_setup(
                 install_btn(state, Tool::Gromacs, ui);
             }
 
-
-            if !using_gromacs_files(state) && button!(
-                ui,
-                "Compute E",
-                COLOR_ACTION,
-                "Compute and display instantaneous energy of selected molecules."
-            )
-                .clicked() {
-                start_md_energy_computation(state);
-            }
-
             if let Some(run) = &state.volatile.md_local.run {
                 if ui
                     .button(RichText::new("Abort").color(Color32::LIGHT_RED))
@@ -342,11 +332,7 @@ fn selected_mols_summary(state: &State, ui: &mut Ui) {
 
     let mols = md::get_mols_sel_for_md(state);
     if mols.is_empty() {
-        ui.label(if state.to_save.md.backend == MdBackend::xTb {
-            "Select a molecule for xTB MD"
-        } else {
-            "No mols selected; solvent only"
-        });
+        ui.label(RichText::new("No mols selected; solvent only").color(COLOR_AMBER));
 
         return;
     }
@@ -413,7 +399,13 @@ fn using_saved_inputs(state: &State) -> bool {
         .is_some_and(|inputs| inputs.backend() == state.to_save.md.backend)
 }
 
-fn run_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
+/// Returns true if Run was clicked.
+fn run_picker(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+) -> bool {
     let running = md::runs::running(state);
     let mut run = false;
 
@@ -426,6 +418,16 @@ fn run_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates,
                 "Run the current MD setup."
             )
                 .clicked();
+
+            if !using_gromacs_files(state) && button!(
+                ui,
+                "Compute E",
+                COLOR_ACTION,
+                "Compute and display instantaneous energy of selected molecules."
+            )
+                .clicked() {
+                start_md_energy_computation(state);
+            }
 
             ui.add_space(COL_SPACING);
 
@@ -487,6 +489,8 @@ fn run_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates,
             state.volatile.md_local.xtb_options.restart = None;
         }
     });
+
+    run
 }
 
 /// Section for integrator config, various modelling parameters etc

@@ -184,7 +184,7 @@ pub fn run_prepared(
     if let Some(bundle) = spec.bundle_root() {
         command.env("BIO_TOOLS_ADAPTER_BUNDLE_ROOT", bundle);
     }
-    if let Some(executable) = env::var_os(spec.exe_override_env) {
+    if let Some(executable) = spec.exe_override_env.and_then(env::var_os) {
         let variable = match spec.kind {
             super::registry::ToolKind::VenvPython => "BIO_TOOLS_ADAPTER_PYTHON",
             _ => "BIO_TOOLS_ADAPTER_EXECUTABLE",
@@ -258,6 +258,14 @@ impl AdapterResult {
 /// uv caches this small, separate coordinator environment. Model packages stay in their own
 /// `bio_tools`-managed environments, which often have incompatible pins.
 fn coordinator_command(tool: Tool) -> io::Result<Command> {
+    if tool == Tool::Psi4 {
+        let spec = super::psi4::coordinator()?;
+        let mut command = Command::new(spec.program);
+        command.args(spec.arguments).envs(spec.environment);
+
+        return Ok(command);
+    }
+
     let package = bio_tools::adapters::package_path()?;
     let uv = env::var_os("MOLCHANICA_UV")
         .or_else(|| env::var_os("BIO_TOOLS_UV"))

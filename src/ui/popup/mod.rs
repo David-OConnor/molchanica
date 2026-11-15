@@ -9,6 +9,7 @@ pub mod pharmacophore;
 pub mod protein_comparison;
 pub mod protein_design;
 mod protein_res_management;
+mod quantum_chem;
 pub(in crate::ui) mod rama_plot;
 pub mod reactions;
 #[cfg(feature = "synthesis")]
@@ -316,6 +317,17 @@ pub(in crate::ui) fn load_popups(
             |ui| protein_tools(state, scene, ui, redraw, updates),
         );
         state.ui.popup.protein_tools &= open;
+    }
+
+    if state.ui.popup.quantum_chem {
+        let open = show_popup(
+            popup("Quantum chemistry")
+                .default_width(760.0)
+                .default_height(700.0),
+            ui.ctx(),
+            |ui| quantum_chem::window(state, scene, updates, ui),
+        );
+        state.ui.popup.quantum_chem &= open;
     }
 
     if state.ui.popup.external_tools {

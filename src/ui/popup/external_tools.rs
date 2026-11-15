@@ -856,11 +856,13 @@ pub fn external_tools_window(state: &mut crate::state::State, ui: &mut Ui) {
                                     .small(),
                             );
                         }
-                        ui.label(
-                            RichText::new(format!("Override with {}", spec.exe_override_env))
-                                .color(COLOR_INACTIVE)
-                                .small(),
-                        );
+                        if let Some(name) = spec.exe_override_env {
+                            ui.label(
+                                RichText::new(format!("Override with {name}"))
+                                    .color(COLOR_INACTIVE)
+                                    .small(),
+                            );
+                        }
                         if let Some(name) = spec.root_override_env {
                             ui.label(
                                 RichText::new(format!("Environment root override: {name}"))

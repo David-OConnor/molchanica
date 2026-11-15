@@ -6,7 +6,7 @@ use na_seq::Element;
 
 use crate::{
     button,
-    cam::{VIEW_DIR_FRONT, reset_camera},
+    cam::{VIEW_DIR_FRONT, move_cam_to_mol_front, reset_camera},
     label,
     md::{viewer, viewer::ViewerMolecule},
     state::State,
@@ -18,6 +18,52 @@ use crate::{
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
+
+/// The first molecule selected for MD; otherwise, the first open one.
+fn cam_target_mol(state: &State) -> Option<(MolType, usize)> {
+    let mut mols: Vec<((MolType, usize), &MoleculeCommon)> = Vec::new();
+
+    mols.extend(
+        state
+            .peptides
+            .iter()
+            .enumerate()
+            .map(|(i, m)| ((MolType::Peptide, i), &m.common)),
+    );
+    mols.extend(
+        state
+            .ligands
+            .iter()
+            .enumerate()
+            .map(|(i, m)| ((MolType::Ligand, i), &m.common)),
+    );
+    mols.extend(
+        state
+            .lipids
+            .iter()
+            .enumerate()
+            .map(|(i, m)| ((MolType::Lipid, i), &m.common)),
+    );
+    mols.extend(
+        state
+            .nucleic_acids
+            .iter()
+            .enumerate()
+            .map(|(i, m)| ((MolType::NucleicAcid, i), &m.common)),
+    );
+    mols.extend(
+        state
+            .pockets
+            .iter()
+            .enumerate()
+            .map(|(i, m)| ((MolType::Pocket, i), &m.common)),
+    );
+
+    mols.iter()
+        .find(|(_, mol)| mol.selected_for_md.is_some())
+        .or(mols.first())
+        .map(|(id, _)| *id)
+}
 
 pub(in crate::ui) fn dynamics_viewer(
     state: &mut State,
@@ -61,25 +107,6 @@ pub(in crate::ui) fn dynamics_viewer(
 
         let ready = state.volatile.md_local.viewer.mols_and_traj_synced();
 
-        {
-            let text = if state.volatile.md_local.draw_md_mols {
-                "Draw original"
-            } else {
-                "Draw MD"
-            };
-
-            if (state.volatile.md_local.draw_md_mols
-                || (!state.volatile.md_local.viewer.snapshots.is_empty() && ready))
-                && ui
-                    .button(RichText::new(text).color(COLOR_HIGHLIGHT))
-                    .on_hover_text(help_text)
-                    .clicked()
-            {
-                state.volatile.md_local.draw_md_mols = !state.volatile.md_local.draw_md_mols;
-                redraw.set_all();
-            }
-        }
-
         if !state.volatile.md_local.viewer.snapshots.is_empty()
             && ui
                 .button(RichText::new("Clear Traj"))
@@ -87,6 +114,10 @@ pub(in crate::ui) fn dynamics_viewer(
                 .clicked()
         {
             state.clear_md_frames(scene, redraw, updates);
+
+            if let Some(molecule) = cam_target_mol(state) {
+                move_cam_to_mol_front(state, scene, molecule, updates);
+            }
         }
 
         if !ready {

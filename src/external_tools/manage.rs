@@ -39,13 +39,16 @@ pub fn install(tool: Tool) -> io::Result<()> {
         )
     })?;
 
-    let mut installer = ToolInstaller::for_process_executables(process_executables_dir()?)
-        .map_err(|error| io::Error::other(error.to_string()))?;
+    let mut installer = managed_installer()?;
     installer.config.support_root = installer_support_root();
 
     installer
         .install(recipe)
         .map_err(|error| io::Error::other(error.to_string()))
+}
+
+pub(super) fn managed_installer() -> io::Result<ToolInstaller> {
+    ToolInstaller::for_process_executables(process_executables_dir()?).map_err(io::Error::other)
 }
 
 fn installer_support_root() -> Option<PathBuf> {
@@ -142,7 +145,10 @@ fn managed_install_roots(tool: Tool, data_root: &Path) -> Vec<PathBuf> {
     let spec = tool.spec();
     let mut roots = Vec::new();
 
-    if matches!(spec.kind, ToolKind::VenvScript | ToolKind::VenvPython) {
+    if matches!(
+        spec.kind,
+        ToolKind::VenvScript | ToolKind::VenvPython | ToolKind::CondaScript
+    ) {
         roots.push(managed_venv_dir(data_root, spec.slug()));
     }
     if let Some(subdir) = spec.bundle_subdir {

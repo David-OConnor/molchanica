@@ -254,7 +254,9 @@ pub fn home_directory() -> Option<PathBuf> {
 pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
     let spec = tool.spec();
 
-    if let Some(configured) = env::var_os(spec.exe_override_env) {
+    if let Some(name) = spec.exe_override_env
+        && let Some(configured) = env::var_os(name)
+    {
         let configured = PathBuf::from(configured);
         if configured.is_file() {
             return Ok(configured);
@@ -263,7 +265,7 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
             io::ErrorKind::NotFound,
             format!(
                 "{} points to {}, but that file does not exist",
-                spec.exe_override_env,
+                name,
                 configured.display()
             ),
         ));
@@ -279,6 +281,15 @@ pub fn find_executable(tool: Tool) -> io::Result<PathBuf> {
         ToolKind::VenvPython => spec
             .venv_root()
             .and_then(|root| executable_in(&venv_bin(&root), "python")),
+        ToolKind::CondaScript => {
+            let installer = super::manage::managed_installer()?;
+            spec.recipe()
+                .filter(|&recipe| {
+                    Path::new(&installer.tool_python_command(recipe).program).is_file()
+                })
+                .map(|recipe| installer.executable_path(recipe))
+                .filter(|path| path.is_file())
+        }
         ToolKind::Executable => find_native_executable(spec),
     };
 

@@ -353,7 +353,7 @@ pub fn launch_md(state: &mut State) {
     });
     state.volatile.thread_receivers.xtb_md = Some(XtbRun { receiver, cancel });
 
-    let mut msg = String::from("Running native xTB MD...");
+    let mut msg = String::from("Running xTB MD...");
     if let Some(limit) = auto_load.limit {
         msg += &format!(
             " Frame step {} on load, {}.",

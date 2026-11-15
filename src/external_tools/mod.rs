@@ -24,10 +24,10 @@
 //! How a tool is driven is set by its [`ToolAdapter`]:
 //!
 //! - **Shared adapter** (OpenDDE, Boltz-2, Chai-1, Protenix, ESMFold 2, AlphaFold 3, ProteinMPNN,
-//!   LigandMPNN, RFdiffusion3): inputs, validation, and command lines all belong to `bio_tools`'
+//!   LigandMPNN, RFdiffusion3, Psi4): inputs, validation, and command lines belong to `bio_tools`'
 //!   Python adapters. [`tool_form`] loads the form contract and presets `bio_tools` publishes, and
 //!   [`shared_adapter`] runs a submitted form. One form, runner, and result browser
-//!   (`ui::popup::tool_runner`) serves all of them, so there is no per-tool code for these here.
+//!   (`ui::popup::tool_runner`) serves them.
 //!   [`remote`] runs the same payload on athanortools.com instead.
 //! - **External** (GROMACS, ORCA, Gemmi): driven from elsewhere in Molchanica; this module only
 //!   finds, probes, and reports on them.
@@ -84,6 +84,7 @@ pub mod tool_form;
 pub mod mpnn;
 
 pub mod pdb_write;
+pub(crate) mod psi4;
 
 pub use manage::{install, uninstall};
 pub use paths::{

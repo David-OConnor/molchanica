@@ -272,6 +272,8 @@ pub struct Preset {
     pub description: String,
     #[serde(default)]
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub group: String,
     values: BTreeMap<String, Value>,
 }
 

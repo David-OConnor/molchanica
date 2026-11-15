@@ -31,6 +31,7 @@ pub enum Tool {
     LigandMpnn,
     RfDiffusion3,
     Gromacs,
+    Psi4,
     Orca,
     Xtb,
     Gemmi,
@@ -39,7 +40,7 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::OpenDde,
         Self::Boltz2,
         Self::Chai1,
@@ -52,6 +53,7 @@ impl Tool {
         Self::RfDiffusion3,
         Self::RdKit,
         Self::Gromacs,
+        Self::Psi4,
         Self::Orca,
         Self::Xtb,
         Self::Gemmi,
@@ -82,6 +84,8 @@ pub enum ToolKind {
     /// a checkout rather than a package with an entry point, and where driving the Python API
     /// directly is more robust than depending on a CLI's argument shape.
     VenvPython,
+    /// A launcher in a managed Conda prefix.
+    CondaScript,
 }
 
 /// How Molchanica runs a tool once it is installed.
@@ -126,8 +130,8 @@ pub struct ToolSpec {
     pub adapter: ToolAdapter,
     /// Base name of the console script or binary, without any platform suffix.
     pub executable: &'static str,
-    /// An absolute path here overrides all discovery.
-    pub exe_override_env: &'static str,
+    /// An absolute path here overrides discovery for tools that support it.
+    pub exe_override_env: Option<&'static str>,
     /// Points at the tool's bundle or virtual-environment root, overriding the managed location.
     pub root_override_env: Option<&'static str>,
     /// Independently overrides a checkout or binary bundle for Python tools that need both a
@@ -323,7 +327,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::External,
         executable: "python",
-        exe_override_env: "RDKIT_PYTHON",
+        exe_override_env: Some("RDKIT_PYTHON"),
         root_override_env: Some("MOLCHANICA_RDKIT_ROOT"),
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -343,7 +347,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "opendde",
-        exe_override_env: "MOLCHANICA_OPENDDE_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_OPENDDE_EXECUTABLE"),
         // Predates this registry and is documented, so it keeps its own name rather than becoming
         // MOLCHANICA_OPENDDE_VENV_DIR; existing installs and shell profiles continue to work.
         root_override_env: Some("OPENDDE_VENV_DIR"),
@@ -362,7 +366,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "boltz",
-        exe_override_env: "MOLCHANICA_BOLTZ_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_BOLTZ_EXECUTABLE"),
         root_override_env: Some("MOLCHANICA_BOLTZ_VENV_DIR"),
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -380,7 +384,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "chai-lab",
-        exe_override_env: "MOLCHANICA_CHAI1_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_CHAI1_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -397,7 +401,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "run_openfold",
-        exe_override_env: "MOLCHANICA_OPENFOLD3_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_OPENFOLD3_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -414,7 +418,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "protenix",
-        exe_override_env: "MOLCHANICA_PROTENIX_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_PROTENIX_EXECUTABLE"),
         root_override_env: Some("MOLCHANICA_PROTENIX_VENV_DIR"),
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -431,7 +435,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "esm-fold",
-        exe_override_env: "MOLCHANICA_ESMFOLD2_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_ESMFOLD2_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -452,7 +456,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
-        exe_override_env: "MOLCHANICA_ALPHAFOLD3_PYTHON",
+        exe_override_env: Some("MOLCHANICA_ALPHAFOLD3_PYTHON"),
         root_override_env: Some("MOLCHANICA_ALPHAFOLD3_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_ALPHAFOLD3_ROOT"),
         bundle_subdir: Some("alphafold3"),
@@ -481,7 +485,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
-        exe_override_env: "MOLCHANICA_LIGANDMPNN_PYTHON",
+        exe_override_env: Some("MOLCHANICA_LIGANDMPNN_PYTHON"),
         root_override_env: Some("MOLCHANICA_LIGANDMPNN_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_LIGANDMPNN_ROOT"),
         bundle_subdir: Some("LigandMPNN"),
@@ -508,7 +512,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvPython,
         adapter: ToolAdapter::SharedAdapter,
         executable: "python",
-        exe_override_env: "MOLCHANICA_PROTEINMPNN_PYTHON",
+        exe_override_env: Some("MOLCHANICA_PROTEINMPNN_PYTHON"),
         root_override_env: Some("MOLCHANICA_PROTEINMPNN_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_PROTEINMPNN_ROOT"),
         bundle_subdir: Some("ProteinMPNN"),
@@ -541,7 +545,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "rfd3",
-        exe_override_env: "MOLCHANICA_RFD3_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_RFD3_EXECUTABLE"),
         root_override_env: Some("MOLCHANICA_RFD3_VENV_DIR"),
         bundle_root_override_env: Some("MOLCHANICA_RFD3_ROOT"),
         bundle_subdir: Some("rfd3"),
@@ -556,7 +560,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         slow_probe: true,
     },
     // ---------------------------------------------------------------------------------------------
-    // Simulation and file formats, driven from elsewhere in Molchanica
+    // Simulation, quantum chemistry, and file formats
     // ---------------------------------------------------------------------------------------------
     ToolSpec {
         tool: Tool::Gromacs,
@@ -564,7 +568,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "gmx",
-        exe_override_env: "MOLCHANICA_GROMACS_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_GROMACS_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: Some("gromacs"),
@@ -579,12 +583,29 @@ pub static REGISTRY: &[ToolSpec] = &[
         slow_probe: true,
     },
     ToolSpec {
+        tool: Tool::Psi4,
+        catalog_slug: "psi4",
+        kind: ToolKind::CondaScript,
+        adapter: ToolAdapter::SharedAdapter,
+        executable: "psi4",
+        exe_override_env: None,
+        root_override_env: None,
+        bundle_root_override_env: None,
+        bundle_subdir: None,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
+        version_args: &[],
+        version_marker: "",
+        slow_probe: true,
+    },
+    ToolSpec {
         tool: Tool::Orca,
         catalog_slug: "orca",
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "orca",
-        exe_override_env: "MOLCHANICA_ORCA_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_ORCA_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,
@@ -605,7 +626,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::Executable,
         adapter: ToolAdapter::External,
         executable: "xtb",
-        exe_override_env: "XTB_EXECUTABLE",
+        exe_override_env: Some("XTB_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: Some("xtb"),
@@ -623,7 +644,7 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::VenvScript,
         adapter: ToolAdapter::External,
         executable: "gemmi",
-        exe_override_env: "MOLCHANICA_GEMMI_EXECUTABLE",
+        exe_override_env: Some("MOLCHANICA_GEMMI_EXECUTABLE"),
         root_override_env: None,
         bundle_root_override_env: None,
         bundle_subdir: None,

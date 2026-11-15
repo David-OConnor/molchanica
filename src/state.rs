@@ -1033,6 +1033,7 @@ pub struct PopupState {
     /// The tabbed "Protein design" window.
     pub protein_tools: bool,
     pub protein_tools_tab: crate::ui::popup::ProteinToolsTab,
+    pub quantum_chem: bool,
     /// The third-party tools status panel.
     pub external_tools: bool,
     /// Sequence design, ΔΔG scanning, and antibody annotation.

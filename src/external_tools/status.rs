@@ -10,9 +10,7 @@ use std::{
 };
 
 use super::{
-    manage::managed_disk_usage,
-    paths::{find_executable, process_executables_dir},
-    process::prepare_python_environment,
+    manage::managed_disk_usage, paths::find_executable, process::prepare_python_environment,
     registry::Tool,
 };
 
@@ -135,8 +133,8 @@ pub fn check(tool: Tool) -> ToolStatus {
         path: Some(executable.clone()),
     };
 
-    if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3)
-        && std::env::var_os(spec.exe_override_env).is_none()
+    if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3 | Tool::Psi4)
+        && spec.exe_override_env.and_then(std::env::var_os).is_none()
         && spec.root_override_env.and_then(std::env::var_os).is_none()
         && spec
             .bundle_root_override_env
@@ -144,9 +142,7 @@ pub fn check(tool: Tool) -> ToolStatus {
             .is_none()
         && let Some(recipe) = spec.recipe()
     {
-        let installer = process_executables_dir().and_then(|root| {
-            bio_tools::install::Installer::for_process_executables(root).map_err(io::Error::other)
-        });
+        let installer = super::manage::managed_installer();
         let status = match installer {
             Ok(installer) => installer.status_full(recipe),
             Err(error) => return failed(error.to_string()),

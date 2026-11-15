@@ -1,9 +1,8 @@
 //! The windows for every tool run through `bio_tools`' shared adapter: a form built from the tool's
 //! contract, a runner, and a browser over each run's retained results.
 //!
-//! Structure prediction, sequence design, and backbone design are the same window over different
-//! groups of tools; see [`ToolWindowKind`]. Nothing here is specific to one tool — what differs
-//! between tools comes from the contract `bio_tools` publishes for each.
+//! [`ToolWindowKind`] selects a group of tools. Each tool's fields and examples come from
+//! `bio_tools`.
 
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -29,6 +28,7 @@ use serde_json::{Map, Value, json};
 use super::{
     external_tools::tool_links,
     flex_lists::{self, PageLists},
+    quantum_chem,
 };
 use crate::{
     compute_caps,
@@ -139,6 +139,7 @@ pub(crate) enum ToolWindowKind {
     StructurePrediction,
     SequenceDesign,
     BackboneDesign,
+    QuantumChemistry,
 }
 
 impl ToolWindowKind {
@@ -147,6 +148,7 @@ impl ToolWindowKind {
             Self::StructurePrediction => "Structure prediction and co-folding",
             Self::SequenceDesign => "Sequence design and scoring",
             Self::BackboneDesign => "RFdiffusion3 backbone generation",
+            Self::QuantumChemistry => "Quantum chemistry",
         }
     }
 
@@ -156,6 +158,7 @@ impl ToolWindowKind {
             Self::StructurePrediction => "structure prediction",
             Self::SequenceDesign => "sequence design",
             Self::BackboneDesign => "backbone generation",
+            Self::QuantumChemistry => "quantum chemistry",
         }
     }
 
@@ -173,6 +176,7 @@ impl ToolWindowKind {
             ],
             Self::SequenceDesign => &[Tool::ProteinMpnn, Tool::LigandMpnn],
             Self::BackboneDesign => &[Tool::RfDiffusion3],
+            Self::QuantumChemistry => &[Tool::Psi4],
         }
     }
 }
@@ -182,6 +186,7 @@ pub(crate) struct ToolWindows {
     structure_prediction: ToolWindow,
     sequence_design: ToolWindow,
     backbone_design: ToolWindow,
+    quantum_chem: ToolWindow,
 }
 
 impl Default for ToolWindows {
@@ -190,6 +195,7 @@ impl Default for ToolWindows {
             structure_prediction: ToolWindow::new(ToolWindowKind::StructurePrediction),
             sequence_design: ToolWindow::new(ToolWindowKind::SequenceDesign),
             backbone_design: ToolWindow::new(ToolWindowKind::BackboneDesign),
+            quantum_chem: ToolWindow::new(ToolWindowKind::QuantumChemistry),
         }
     }
 }
@@ -215,9 +221,12 @@ pub(in crate::ui) fn tool_window(
         ToolWindowKind::StructurePrediction => &mut windows.structure_prediction,
         ToolWindowKind::SequenceDesign => &mut windows.sequence_design,
         ToolWindowKind::BackboneDesign => &mut windows.backbone_design,
+        ToolWindowKind::QuantumChemistry => &mut windows.quantum_chem,
     };
 
-    ui.heading(kind.heading());
+    if kind != ToolWindowKind::QuantumChemistry {
+        ui.heading(kind.heading());
+    }
 
     let computations = &state.volatile.ongoing_computations;
     let compute = Compute {
@@ -273,6 +282,8 @@ struct Form {
     authoritative_mode: String,
     projection_error: Option<String>,
     preset: Option<usize>,
+    preset_search: String,
+    upload_format: String,
     opened_protein: Option<usize>,
 }
 
@@ -280,6 +291,10 @@ impl Form {
     fn new(tool: Tool) -> Result<Self, String> {
         let slug = shared_adapter::slug(tool);
         let contract = FormContract::load(slug)?;
+        let upload_format = contract
+            .field("input_format")
+            .map(FormField::default_text)
+            .unwrap_or_default();
 
         Ok(Self {
             mode: contract.default_mode(),
@@ -289,6 +304,8 @@ impl Form {
             presets: Preset::load_all(slug)?,
             contract,
             preset: None,
+            preset_search: String::new(),
+            upload_format,
             opened_protein: None,
         })
     }
@@ -305,6 +322,12 @@ impl Form {
             .cloned()
             .unwrap_or_else(|| self.contract.default_mode());
         self.preset = Some(index);
+        self.preset_search.clear();
+        self.upload_format = self
+            .contract
+            .field("input_format")
+            .map(FormField::default_text)
+            .unwrap_or_default();
         if working == "upload" || shared_adapter::slug(tool) != "rfd3" {
             self.mode = self.authoritative_mode.clone();
         } else {
@@ -897,6 +920,24 @@ enum SequenceTarget {
 enum JobResult {
     Run(Result<AdapterResult, String>),
     Install(Result<(), String>),
+    ProjectInput(io::Result<HashMap<String, String>>),
+}
+
+#[derive(Clone, Copy)]
+enum JobAction {
+    Run,
+    Install,
+    ProjectInput,
+}
+
+impl JobAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Run => "Running",
+            Self::Install => "Installing",
+            Self::ProjectInput => "Converting input",
+        }
+    }
 }
 
 /// A tool window: which tool is selected, each tool's form, the job running, and past results.
@@ -905,8 +946,7 @@ pub(crate) struct ToolWindow {
     forms: HashMap<Tool, Form>,
     receiver: Option<mpsc::Receiver<JobResult>>,
     control: Option<RunControl>,
-    started: Option<Instant>,
-    installing: bool,
+    started: Option<(Instant, JobAction)>,
     error: Option<String>,
     message: Option<String>,
     results: Vec<(Tool, AdapterResult)>,
@@ -943,7 +983,6 @@ impl ToolWindow {
             receiver: None,
             control: None,
             started: None,
-            installing: false,
             error: None,
             message: None,
             results: Vec::new(),
@@ -974,7 +1013,12 @@ impl ToolWindow {
             Ok(result) => result,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => {
-                JobResult::Run(Err("The worker stopped without returning a result.".into()))
+                let message = "The worker stopped without returning a result.";
+                if matches!(self.started, Some((_, JobAction::ProjectInput))) {
+                    JobResult::ProjectInput(Err(io::Error::other(message)))
+                } else {
+                    JobResult::Run(Err(message.into()))
+                }
             }
         };
 
@@ -996,12 +1040,19 @@ impl ToolWindow {
             }
             JobResult::Run(Err(error)) | JobResult::Install(Err(error)) => self.error = Some(error),
             JobResult::Install(Ok(())) => self.message = Some("Installation completed.".into()),
+            JobResult::ProjectInput(result) => {
+                if let Some(form) = self.forms.get_mut(&self.tool) {
+                    match result {
+                        Ok(values) => form.values.extend(values),
+                        Err(error) => form.projection_error = Some(error.to_string()),
+                    }
+                }
+            }
         }
 
         self.receiver = None;
         self.control = None;
         self.started = None;
-        self.installing = false;
     }
 
     pub(crate) fn for_binding() -> Self {
@@ -1063,7 +1114,7 @@ impl ToolWindow {
                 spec.name(),
                 Some("installing".into()),
             );
-            self.start_job(ui, true, computation, move || {
+            self.start_job(ui, JobAction::Install, computation, move || {
                 JobResult::Install(external_tools::install(tool).map_err(|e| e.to_string()))
             });
         }
@@ -1080,7 +1131,7 @@ impl ToolWindow {
                     let token = remote_token(compute.token);
 
                     self.control = Some(control.clone());
-                    self.start_job(ui, false, computation, move || {
+                    self.start_job(ui, JobAction::Run, computation, move || {
                         let result = if remote {
                             request.run_remote(token, &control)
                         } else {
@@ -1104,7 +1155,7 @@ impl ToolWindow {
     fn start_job(
         &mut self,
         ui: &Ui,
-        installing: bool,
+        action: JobAction,
         computation: ComputationGuard,
         job: impl FnOnce() -> JobResult + Send + 'static,
     ) {
@@ -1112,8 +1163,7 @@ impl ToolWindow {
         let context = ui.ctx().clone();
 
         self.receiver = Some(receiver);
-        self.started = Some(Instant::now());
-        self.installing = installing;
+        self.started = Some((Instant::now(), action));
         self.error = None;
         self.message = None;
 
@@ -1156,6 +1206,9 @@ impl ToolWindow {
 
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
+                if kind == ToolWindowKind::QuantumChemistry {
+                    ui.label("Backend");
+                }
                 ComboBox::from_id_salt("scientific_tool")
                     .selected_text(self.tool.spec().name())
                     .show_ui(ui, |ui| {
@@ -1170,7 +1223,9 @@ impl ToolWindow {
         });
 
         let spec = self.tool.spec();
-        compute_guidance(self.tool, compute.target, compute.adapter, ui);
+        if self.tool != Tool::Psi4 {
+            compute_guidance(self.tool, compute.target, compute.adapter, ui);
+        }
 
         if let Entry::Vacant(entry) = self.forms.entry(self.tool) {
             match Form::new(self.tool) {
@@ -1209,11 +1264,12 @@ impl ToolWindow {
         let mut pick_sequence = None;
         let mut use_sequence = None;
         let mut use_protein = None;
+        let mut project_input = false;
         let form = self.forms.get_mut(&self.tool).unwrap();
 
         ui.add_enabled_ui(!busy, |ui| {
             preset_ui(self.tool, form, ui);
-            mode_and_task_ui(self.tool, form, ui);
+            project_input = mode_and_task_ui(self.tool, form, ui);
             ui.add_space(ROW_SPACING);
 
             if form.contract.structure_field(&form.mode).is_some() && !proteins.is_empty() {
@@ -1275,6 +1331,11 @@ impl ToolWindow {
         }
 
         if let Some(field) = pick {
+            if self.tool == Tool::Psi4
+                && let Some(field) = form.contract.field(&field)
+            {
+                quantum_chem::filter_input_files(self.dialog.config_mut(), field);
+            }
             self.file_action = Some(FileAction::Input(self.tool, field));
             self.dialog.pick_file();
         }
@@ -1290,6 +1351,7 @@ impl ToolWindow {
         let mut install = false;
         let mut run = false;
         let installed = external_tools::is_installed(self.tool);
+        let busy = busy || project_input;
 
         footer.horizontal(|ui| {
             if remote || installed {
@@ -1310,22 +1372,57 @@ impl ToolWindow {
 
             let note = if remote {
                 "Runs on athanortools.com. Raw outputs are downloaded and saved locally."
+            } else if self.tool == Tool::Psi4 {
+                "Runs locally on the CPU."
             } else {
                 "Raw outputs are saved locally."
             };
             ui.label(RichText::new(note).small());
             if ui
-                .button("Open saved run…")
+                .add_enabled(
+                    self.tool != Tool::Psi4 || !busy,
+                    Button::new("Open saved run…"),
+                )
                 .on_hover_text("Choose result.json from a saved run folder.")
                 .clicked()
             {
                 self.file_action = Some(FileAction::LoadRun(self.tool));
+                self.dialog.config_mut().default_file_filter = None;
                 self.dialog.pick_file();
             }
         });
 
         let tool = self.tool;
         let payload = run.then(|| form.run_payload(tool, proteins));
+
+        if project_input {
+            let target = form.mode.clone();
+            let mut values = form.contract.defaults();
+            let mut target_values = HashMap::new();
+            for field in &form.contract.fields {
+                if field.applies_to(&form.authoritative_mode)
+                    && let Some(value) = form.values.get(&field.name)
+                {
+                    values.insert(field.name.clone(), value.clone());
+                }
+                if field.input_modes == target {
+                    target_values.insert(field.name.clone(), field.default_text());
+                }
+            }
+            let computation = computations.start(
+                ComputationType::QuantumMechanics,
+                spec.name(),
+                Some("converting input".into()),
+            );
+            self.start_job(ui, JobAction::ProjectInput, computation, move || {
+                let result = external_tools::psi4::project(&values, &target).map(|projected| {
+                    target_values.extend(projected);
+
+                    target_values
+                });
+                JobResult::ProjectInput(result)
+            });
+        }
 
         if install {
             let computation = computations.start(
@@ -1334,7 +1431,7 @@ impl ToolWindow {
                 Some("installing".to_owned()),
             );
 
-            self.start_job(ui, true, computation, move || {
+            self.start_job(ui, JobAction::Install, computation, move || {
                 JobResult::Install(external_tools::install(tool).map_err(|error| error.to_string()))
             });
         }
@@ -1343,8 +1440,12 @@ impl ToolWindow {
             match payload {
                 Err(error) => self.error = Some(error.to_string()),
                 Ok(payload) => {
+                    let comp_type = match kind {
+                        ToolWindowKind::QuantumChemistry => ComputationType::QuantumMechanics,
+                        _ => ComputationType::MachineLearning,
+                    };
                     let computation = computations.start(
-                        ComputationType::MachineLearning,
+                        comp_type,
                         spec.name(),
                         Some(activity(kind.activity(), remote)),
                     );
@@ -1353,7 +1454,7 @@ impl ToolWindow {
                     let token = remote_token(compute.token);
 
                     self.control = Some(control.clone());
-                    self.start_job(ui, false, computation, move || {
+                    self.start_job(ui, JobAction::Run, computation, move || {
                         let result = if remote {
                             remote::run(tool, payload, token, &control)
                         } else {
@@ -1447,8 +1548,12 @@ impl ToolWindow {
                     {
                         form.opened_protein = None;
                     }
+                    if tool == Tool::Psi4 {
+                        quantum_chem::set_file_format(&mut form.values, &path);
+                    } else {
+                        form.authoritative_mode = form.mode.clone();
+                    }
                     form.values.insert(field, path.display().to_string());
-                    form.authoritative_mode = form.mode.clone();
                 }
             }
             Some(FileAction::Export(source)) => match fs::copy(&source, &path) {
@@ -1525,20 +1630,16 @@ impl ToolWindow {
 
     /// The spinner, elapsed time, and cancel button for a running job.
     fn progress_ui(&self, ui: &mut Ui) {
-        let Some(started) = self.started else {
+        let Some((started, action)) = self.started else {
             return;
         };
 
         ui.horizontal(|ui| {
             ui.spinner();
             let elapsed = started.elapsed().as_secs();
-            let activity = if self.installing {
-                "Installing"
-            } else {
-                "Running"
-            };
             ui.label(format!(
-                "{activity} · {}m {:02}s",
+                "{} · {}m {:02}s",
+                action.label(),
                 elapsed / 60,
                 elapsed % 60
             ));
@@ -1591,6 +1692,9 @@ impl ToolWindow {
         }
 
         let (tool, result) = &self.results[self.selected_result];
+        if *tool == Tool::Psi4 {
+            quantum_chem::summary_ui(&result.details, lists, ui);
+        }
         if *tool == Tool::Boltz2 {
             let outputs = self
                 .boltz_outputs
@@ -1644,7 +1748,7 @@ impl ToolWindow {
                                 Err(error) => self.error = Some(error.to_string()),
                             }
                         }
-                        ui.label(output_label(result, path))
+                        ui.label(output_label(*tool, result, path))
                             .on_hover_text(path.display().to_string());
                     });
                 }
@@ -1689,7 +1793,7 @@ impl ToolWindow {
                         export = Some(path.clone());
                     }
 
-                    let label = output_label(result, path);
+                    let label = output_label(*tool, result, path);
                     if ui
                         .selectable_label(self.selected_file.as_ref() == Some(path), label)
                         .on_hover_text(path.display().to_string())
@@ -1736,6 +1840,7 @@ impl ToolWindow {
         });
 
         if let Some(path) = export {
+            self.dialog.config_mut().default_file_filter = None;
             self.dialog.config_mut().default_file_name = path
                 .file_name()
                 .unwrap_or_default()
@@ -1890,7 +1995,13 @@ fn read_output_text(path: &Path, maximum: u64) -> io::Result<String> {
 }
 
 /// An output's path relative to the run's `outputs` folder, when it is under it.
-fn output_label(result: &AdapterResult, path: &Path) -> String {
+fn output_label(tool: Tool, result: &AdapterResult, path: &Path) -> String {
+    if tool == Tool::Psi4
+        && let Some(label) = quantum_chem::output_name(path)
+    {
+        return label.into();
+    }
+
     let log_root = result
         .details
         .get("run_log_dir")
@@ -1907,6 +2018,10 @@ fn output_label(result: &AdapterResult, path: &Path) -> String {
 fn output_category(path: &Path) -> Option<DataCategory> {
     let name = path.to_string_lossy().to_lowercase();
     let name = name.strip_suffix(".gz").unwrap_or(&name);
+    if name.ends_with(".xyz") {
+        return Some(DataCategory::Structure);
+    }
+
     [
         DataCategory::Structure,
         DataCategory::Sequence,
@@ -1917,6 +2032,15 @@ fn output_category(path: &Path) -> Option<DataCategory> {
 }
 
 fn primary_file(tool: Tool, result: &AdapterResult) -> Option<&PathBuf> {
+    if tool == Tool::Psi4
+        && let Some(geometry) = result
+            .files
+            .iter()
+            .find(|path| quantum_chem::is_final_geometry(path))
+    {
+        return Some(geometry);
+    }
+
     let category = tool
         .spec()
         .catalog()
@@ -2011,16 +2135,51 @@ fn sequence_results_ui(fasta: &str, lists: &mut PageLists, ui: &mut Ui) {
 fn preset_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
     ui.horizontal(|ui| {
         let mut chosen = form.preset;
-        ComboBox::from_id_salt("tool_preset")
+        let mut picker = ComboBox::from_id_salt("tool_preset");
+        if tool == Tool::Psi4 {
+            picker = picker
+                .height(390.0)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        }
+        picker
             .selected_text(
                 chosen
                     .map(|index| form.presets[index].label.as_str())
                     .unwrap_or("Choose an example…"),
             )
             .show_ui(ui, |ui| {
+                if tool == Tool::Psi4 {
+                    ui.add(
+                        TextEdit::singleline(&mut form.preset_search).hint_text("Search examples"),
+                    );
+                }
+
+                let search = form.preset_search.trim().to_lowercase();
+                let mut group = "";
                 for (index, preset) in form.presets.iter().enumerate() {
-                    ui.selectable_value(&mut chosen, Some(index), &preset.label)
-                        .on_hover_text(&preset.description);
+                    if !search.is_empty()
+                        && ![&preset.label, &preset.id, &preset.group]
+                            .iter()
+                            .any(|text| text.to_lowercase().contains(&search))
+                    {
+                        continue;
+                    }
+                    if preset.group != group {
+                        group = &preset.group;
+                        ui.separator();
+                        if !group.is_empty() {
+                            ui.strong(group);
+                        }
+                    }
+
+                    if ui
+                        .selectable_value(&mut chosen, Some(index), &preset.label)
+                        .on_hover_text(&preset.description)
+                        .clicked()
+                        && tool == Tool::Psi4
+                    {
+                        ui.close();
+                    }
                 }
             });
 
@@ -2053,27 +2212,38 @@ fn preset_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
 }
 
 /// The input-mode radio buttons and the task picker, for the tools that have them.
-fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
+fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) -> bool {
+    let mut project_input = false;
     if let Some(modes) = &form.contract.input_modes {
         let previous = form.mode.clone();
         ui.horizontal_wrapped(|ui| {
             ui.label(&modes.label);
             selector_box().show(ui, |ui| {
                 for option in &modes.options {
-                    if selector_option(
-                        ui,
-                        form.mode == option.value,
-                        option.label.replace("Upload", "Choose file:"),
-                    )
-                    .clicked()
-                    {
+                    let label = if tool == Tool::Psi4 && option.value == "upload" {
+                        "Choose a Psithon or Python file".to_owned()
+                    } else {
+                        option.label.replace("Upload", "Choose file:")
+                    };
+                    if selector_option(ui, form.mode == option.value, label).clicked() {
                         form.mode = option.value.clone();
                     }
                 }
             });
         });
-        if form.mode != previous && shared_adapter::slug(tool) == "rfd3" {
-            form.project_mode();
+        if form.mode != previous {
+            match tool {
+                Tool::RfDiffusion3 => form.project_mode(),
+                Tool::Psi4 => {
+                    form.projection_error = None;
+                    if previous == "upload" || form.mode == "upload" {
+                        let format = form.values.entry("input_format".into()).or_default();
+                        std::mem::swap(format, &mut form.upload_format);
+                    }
+                    project_input = form.mode != "upload" && form.mode != form.authoritative_mode;
+                }
+                _ => {}
+            }
         }
     }
 
@@ -2097,6 +2267,8 @@ fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) {
                 });
         });
     }
+
+    project_input
 }
 
 /// Every field visible in the current mode and task, under its group's heading.
@@ -2140,7 +2312,7 @@ fn fields_ui(
 
                 CollapsingHeader::new(title)
                     .id_salt((shared_adapter::slug(tool), label))
-                    .default_open(index == 0)
+                    .default_open(index == 0 || tool == Tool::Psi4)
                     .show(ui, |ui| {
                         if let Some(url) = group.and_then(|group| group.docs_url.as_deref()) {
                             ui.hyperlink_to("Parameter documentation", url);
@@ -2178,7 +2350,19 @@ fn fields_ui(
     let edited_input = form.contract.fields.iter().any(|field| {
         field.input_modes == form.mode && form.values.get(&field.name) != before.get(&field.name)
     });
-    if edited_input && shared_adapter::slug(tool) == "rfd3" {
+    let changed_format = form.values.get("input_format") != before.get("input_format");
+    if tool == Tool::Psi4
+        && form.mode == "upload"
+        && edited_input
+        && let Some(path) = form.values.get("psi4_input_file").cloned()
+    {
+        quantum_chem::set_file_format(&mut form.values, Path::new(path.trim()));
+    }
+    if edited_input && tool == Tool::RfDiffusion3
+        || tool == Tool::Psi4
+            && form.mode != "upload"
+            && (edited_input || (changed_format && form.projection_error.is_none()))
+    {
         form.authoritative_mode = form.mode.clone();
         form.projection_error = None;
     }
@@ -2255,11 +2439,13 @@ fn draw_field(
                     }
                 }
             }
-            ui.add(
-                TextEdit::multiline(value)
-                    .desired_rows(field.rows.unwrap_or(3).clamp(2, 12))
-                    .desired_width(f32::INFINITY),
-            )
+            let rows = field.rows.unwrap_or(3);
+            let editor = TextEdit::multiline(value).desired_width(f32::INFINITY);
+            if tool == Tool::Psi4 {
+                ui.add(editor.code_editor().desired_rows(rows.max(2)))
+            } else {
+                ui.add(editor.desired_rows(rows.clamp(2, 12)))
+            }
         }
         FieldKind::Molecules => {
             ui.label(&label);

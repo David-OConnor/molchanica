@@ -314,7 +314,7 @@ fn draw_cli(
 ) {
     ui.horizontal_wrapped(|ui| {
         ui.label("Out: ");
-        if button!(ui, "Clear", COLOR_ACTION, "Clear the output text.").clicked() {
+        if button!(ui, "Clear", Color32::GRAY, "Clear the output text.").clicked() {
             state.ui.cmd_line_output.clear();
             state.ui.cmd_line_out_is_err = false;
         }
@@ -868,6 +868,17 @@ fn top_controls(
                 .clicked()
             {
                 state.ui.popup.protein_tools = !state.ui.popup.protein_tools;
+            }
+
+            if button!(
+                ui,
+                "Q chem",
+                COLOR_HIGHLIGHT,
+                "Run quantum chemistry calculations with Psi4."
+            )
+            .clicked()
+            {
+                state.ui.popup.quantum_chem = !state.ui.popup.quantum_chem;
             }
 
             if state.peptides.len() >= 2 && button!(ui, "Compare proteins", COLOR_HIGHLIGHT, "Compare and align 2 proteins").clicked() {
