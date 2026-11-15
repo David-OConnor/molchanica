@@ -4,7 +4,7 @@ name: macOS release
 
 on:
   release:
-    types: [published]
+    types: [ published ]
   # For past releases, whose tags predate this file, and for test builds.
   workflow_dispatch:
     inputs:
@@ -72,6 +72,7 @@ jobs:
           clone() { git clone --depth 1 "https://github.com/David-OConnor/$1" "$2"; }
 
           clone bio_files ../bio_files
+          clone bio_apis ../bio_apis
           clone dynamics ../dynamics
           clone mol_defs ../mol_defs
           clone ewald ../ewald
