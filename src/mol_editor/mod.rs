@@ -87,6 +87,7 @@ pub struct MdEditor {
     pub steps_per_update: usize,
     pub pull_strength: f32,
     pub pull_target: Option<(usize, Vec3F32)>,
+    pending_pull: Option<(usize, Vec3F32)>,
     pub pinned_atoms: Vec<usize>,
     pub error: Option<String>,
 }
@@ -97,7 +98,7 @@ impl Default for MdEditor {
             md: Default::default(),
             solvent: Solvent::None,
             mol_specific_params: Default::default(),
-            dt: 0.00001,
+            dt: 0.0001,
             time_between_runs: 33.333,
             running: Default::default(),
             last_dt_run: Instant::now(),
@@ -106,6 +107,7 @@ impl Default for MdEditor {
             steps_per_update: 20,
             pull_strength: 20.,
             pull_target: None,
+            pending_pull: None,
             pinned_atoms: Vec::new(),
             error: None,
         }
@@ -124,10 +126,20 @@ fn pull_force(displacement: Vec3F32, strength: f32) -> Vec3F32 {
 }
 
 impl MdEditor {
+    pub(crate) fn set_pull_target(&mut self, index: usize, target: Vec3F32) {
+        self.pull_target = Some((index, target));
+        self.pending_pull = self.pull_target;
+    }
+
+    pub(crate) fn clear_pull(&mut self) {
+        self.pull_target = None;
+        self.pending_pull = None;
+    }
+
     fn invalidate(&mut self) {
         self.md = None;
         self.snap = None;
-        self.pull_target = None;
+        self.clear_pull();
         self.pinned_atoms.clear();
         self.error = None;
         self.rebuild_required = true;
@@ -561,9 +573,11 @@ impl MolEditorState {
 
         self.md.last_dt_run = Instant::now();
 
+        // A quick drag can end before the next MD update.
+        let pull_target = self.md.pull_target.or(self.md.pending_pull.take());
         let start = Instant::now();
         for _ in 0..self.md.steps_per_update {
-            let forces = self.md.pull_target.and_then(|(i, target)| {
+            let forces = pull_target.and_then(|(i, target)| {
                 let atom = md.atoms.get(i)?;
                 if atom.static_ {
                     return None;
@@ -580,7 +594,6 @@ impl MolEditorState {
             if let Some(error) = &md.force_error {
                 self.md.error = Some(format!("IMD stopped: {error:?}"));
                 self.md.running = false;
-                self.md.pull_target = None;
 
                 break;
             }
@@ -606,7 +619,7 @@ impl MolEditorState {
                 "IMD stopped: unstable geometry. Relax before restarting.".to_owned()
             });
             self.md.running = false;
-            self.md.pull_target = None;
+            self.md.clear_pull();
             self.md.md = None;
             self.md.snap = None;
             self.md.pinned_atoms.clear();
@@ -1428,7 +1441,7 @@ pub fn ensure_dynamics(state: &mut State) -> bool {
         return true;
     }
 
-    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.clear_pull();
     state.mol_editor.md.pinned_atoms.clear();
     state.mol_editor.md.snap = None;
     let result = build_dynamics(
@@ -1461,7 +1474,7 @@ pub fn ensure_dynamics(state: &mut State) -> bool {
 }
 
 pub fn relax(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.clear_pull();
     if !ensure_dynamics(state) {
         return;
     }
@@ -1514,7 +1527,7 @@ pub fn sync_md(state: &mut State) {
     // This runs after edits, some of which change the structure.
     state.mol_editor.refresh_smiles();
 
-    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.clear_pull();
     state.mol_editor.md.pinned_atoms.clear();
     state.mol_editor.md.rebuild_required = true;
 

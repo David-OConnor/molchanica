@@ -440,7 +440,7 @@ pub(in crate::ui) fn sequence_display(
             }
 
             let create_clicked = create_rect.is_some_and(|create_rect| {
-                ui.put(create_rect, create_seq_btn())
+                ui.put(create_rect, create_seq_btn(true))
                     .on_hover_text(CREATE_SEQ_HOVER)
                     .clicked()
             });
@@ -615,9 +615,9 @@ pub(in crate::ui) fn standalone_sequence(
 
             if seq_type == SeqType::AminoAcid {
                 geometry_selector(ui, &mut state.ui.aa_geometry_to_create);
-                peptide = create_peptide_button(ui);
+                peptide = create_peptide_button(ui, true);
             }
-            folded = create_folded_button(ui);
+            folded = create_folded_button(ui, true);
         }
     });
 

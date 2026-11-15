@@ -167,9 +167,12 @@ If *orbit sel* is set in the GUI, the orbit center will be the selected atom or 
 ![RFDiffusion3 example window](screenshots/rfd3_example.png)
 ### Hotkeys
 
-Most of this functionality is also available in the GUI, and you can find hotkeys from the GUI's tooltips. We recommend
-starting with the GUI, and integrating hotkeys into your workflow as you go, using tooltips.
-See below for a reference.
+Most of this functionality is also available in the GUI, and you can find hotkeys from the GUI's tooltips. We recommend starting with the GUI, and integrating hotkeys into your workflow as you go, using tooltips. See below for a reference.
+
+### General:
+
+- **F3**: Pulls up a search for UI items; an alternative to clicking around the UI, especially for items you are not sure of the location.
+
 
 #### Mouse controls:
 

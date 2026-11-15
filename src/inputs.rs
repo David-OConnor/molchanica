@@ -138,6 +138,7 @@ pub fn event_win_handler(
             let previous = state_.ui.cursor_pos;
             state_.ui.cursor_pos = Some((position.x as f32, position.y as f32));
             if state_.ui.left_click_down
+                && !imd_pull_mode(state_)
                 && !crate::region_select::motion(state_)
                 && let Some(previous) = previous
             {
@@ -208,7 +209,7 @@ pub fn event_win_handler(
             device_id: _,
             state,
             button,
-        } => handle_mouse_button(
+        } if button != MouseButton::Left || !imd_pull_mode(state_) => handle_mouse_button(
             state_,
             scene,
             &mut redraw,
@@ -283,6 +284,8 @@ pub(crate) fn handle_ui_interactions(
             mol_manip::end_transform(state, scene, true, redraw, updates);
         }
         crate::region_select::cancel(state, scene);
+    } else if imd_pull_mode(state) {
+        handle_imd_pointer(state, scene, ctx, &events, redraw, updates);
     } else if state.ui.left_click_down {
         if let Some(cursor) = cursor {
             let scale = ctx.pixels_per_point();
@@ -386,6 +389,87 @@ pub(crate) fn handle_ui_interactions(
     }
 }
 
+fn imd_pull_mode(state: &State) -> bool {
+    state.volatile.operating_mode == OperatingMode::MolEditor
+        && state.mol_editor.md.running
+        && matches!(
+            state.volatile.mol_manip.mode,
+            ManipMode::Move((MolType::Ligand, _))
+        )
+}
+
+// Use egui's pointer events for IMD so native UI hover routing cannot drop a viewport press.
+fn handle_imd_pointer(
+    state: &mut State,
+    scene: &mut Scene,
+    ctx: &egui::Context,
+    events: &[egui::Event],
+    redraw: &mut RedrawFlags,
+    updates: &mut EngineUpdates,
+) {
+    let scale = ctx.pixels_per_point();
+    let (mut previous, primary_down) = ctx.input(|input| {
+        (
+            input
+                .pointer
+                .latest_pos()
+                .map(|pos| pos - input.pointer.delta()),
+            input.pointer.primary_down(),
+        )
+    });
+    let (x, y, width, height) = crate::gizmo::viewport_points(scene, scale);
+    let viewport = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(width, height));
+    let modal_open = ctx.memory(|memory| memory.top_modal_layer().is_some());
+
+    for event in events {
+        let (pos, pressed) = match *event {
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                ..
+            } => (pos, Some(pressed)),
+            egui::Event::PointerMoved(pos) => (pos, None),
+            _ => continue,
+        };
+
+        state.ui.cursor_pos = Some((pos.x * scale, pos.y * scale));
+        if pressed == Some(true) {
+            if !modal_open
+                && viewport.contains(pos)
+                && ctx
+                    .layer_id_at(pos)
+                    .is_none_or(|layer| layer.order == egui::Order::Background)
+            {
+                state.ui.left_click_down = begin_left_drag(state, scene, updates);
+            }
+        } else if state.ui.left_click_down
+            && let Some(previous) = previous
+            && previous != pos
+        {
+            let delta = (pos - previous) * scale;
+            mol_manip::handle_mol_manip_in_plane(
+                state,
+                scene,
+                (delta.x as f64, delta.y as f64),
+                redraw,
+                updates,
+            );
+        }
+        if pressed == Some(false) && state.ui.left_click_down {
+            mol_manip::finish_drag(state, redraw);
+            state.ui.left_click_down = false;
+        }
+
+        previous = Some(pos);
+    }
+
+    if !primary_down && state.ui.left_click_down {
+        mol_manip::finish_drag(state, redraw);
+        state.ui.left_click_down = false;
+    }
+}
+
 #[allow(unused)]
 /// Debug code to draw teh ray on screen, so we can see why the selection is off.
 fn plot_ray() {
@@ -481,6 +565,28 @@ fn redraw_inplace_helper(
     updates.entities.push_class(class);
 }
 
+fn begin_left_drag(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) -> bool {
+    if crate::region_select::begin(state) {
+        return true;
+    }
+
+    let handle = state
+        .ui
+        .cursor_pos
+        .and_then(|p| crate::gizmo::hit_test(state, scene, p));
+    if let Some(mol_manip::Handle::Camera(axis, positive)) = handle {
+        let direction = axis.vector() * if positive { -1. } else { 1. };
+        cam::reset_camera(state, scene, updates, direction);
+        state.ui.cam_snapshot = None;
+
+        return false;
+    }
+
+    mol_manip::begin_drag(state, scene, handle);
+
+    true
+}
+
 fn handle_mouse_button(
     state: &mut State,
     scene: &mut Scene,
@@ -493,25 +599,7 @@ fn handle_mouse_button(
     match button {
         MouseButton::Left => {
             state.ui.left_click_down = match btn_state {
-                ElementState::Pressed => {
-                    if crate::region_select::begin(state) {
-                        true
-                    } else {
-                        let handle = state
-                            .ui
-                            .cursor_pos
-                            .and_then(|p| crate::gizmo::hit_test(state, scene, p));
-                        if let Some(mol_manip::Handle::Camera(axis, positive)) = handle {
-                            let direction = axis.vector() * if positive { -1. } else { 1. };
-                            cam::reset_camera(state, scene, updates, direction);
-                            state.ui.cam_snapshot = None;
-                            false
-                        } else {
-                            mol_manip::begin_drag(state, scene, handle);
-                            true
-                        }
-                    }
-                }
+                ElementState::Pressed => begin_left_drag(state, scene, updates),
                 ElementState::Released => {
                     if !crate::region_select::finish(state, scene, redraw) {
                         mol_manip::finish_drag(state, redraw);

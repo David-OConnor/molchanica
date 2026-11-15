@@ -1,7 +1,4 @@
-use egui::{
-    Color32, ComboBox, Resize, RichText, ScrollArea, TextBuffer, TextEdit, TextStyle, Ui,
-    text::{LayoutJob, TextFormat},
-};
+use egui::{ComboBox, Resize, RichText, ScrollArea, TextBuffer, TextEdit, TextStyle, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{
     MolGenericRef, MolType, MoleculeGeneric,
@@ -22,6 +19,10 @@ use crate::{
     util::handle_err,
 };
 
+use super::sequence_input::{
+    INVALID_LETTER_COLOR, create_button, layout, letter_counts, status_label,
+};
+
 fn nt_name(nt: Nucleotide, na_type: NucleicAcidType) -> &'static str {
     match nt {
         A => "adenine",
@@ -34,25 +35,13 @@ fn nt_name(nt: Nucleotide, na_type: NucleicAcidType) -> &'static str {
 
 fn sequence_input(ui: &mut Ui, text: &mut String, na_type: NucleicAcidType, max_width: f32) {
     let help = "Enter a nucleotide sequence. Drag the lower-right corner to resize.";
+
     let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
         let font_id = TextStyle::Monospace.resolve(ui.style());
-        let mut job = LayoutJob::default();
-        job.wrap.max_width = wrap_width;
 
-        for ch in text.as_str().chars() {
-            let color = nucleotide(ch, na_type).map_or(Color32::from_rgb(255, 165, 0), base_color);
-            job.append(
-                ch.encode_utf8(&mut [0; 4]),
-                0.,
-                TextFormat {
-                    font_id: font_id.clone(),
-                    color,
-                    ..Default::default()
-                },
-            );
-        }
-
-        ui.fonts_mut(|fonts| fonts.layout_job(job))
+        layout(ui, text.as_str(), wrap_width, font_id, |ch| {
+            nucleotide(ch, na_type).map_or(INVALID_LETTER_COLOR, base_color)
+        })
     };
 
     ui.label("Seq").on_hover_text(help);
@@ -184,25 +173,22 @@ pub(in crate::ui) fn na_section(
                         }
                     });
 
-                if ui
-                    .button(RichText::new("Create").color(COLOR_ACTION))
-                    .clicked()
-                {
-                    let na_type = state.to_save.nucleic_acid.na_type;
-                    let seq: Vec<_> = state
-                        .to_save
-                        .nucleic_acid
-                        .seq_to_create
+                let na_type = state.to_save.nucleic_acid.na_type;
+                let text = &state.to_save.nucleic_acid.seq_to_create;
+                let (valid, invalid) = letter_counts(text, |ch| nucleotide(ch, na_type).is_some());
+                let can_create = valid > 0 && invalid == 0;
+
+                let create = ui.add_enabled(
+                    can_create,
+                    create_button("Create", COLOR_ACTION, can_create),
+                );
+                status_label(ui, valid, invalid, "nucleotide");
+
+                if create.clicked() {
+                    let seq: Vec<_> = text
                         .chars()
                         .filter_map(|ch| nucleotide(ch, na_type))
                         .collect();
-                    if seq.is_empty() {
-                        handle_err(
-                            &mut state.ui,
-                            "Enter a nucleotide sequence first".to_owned(),
-                        );
-                        return;
-                    }
 
                     let mut mol = match MoleculeNucleicAcid::from_seq(
                         &seq,

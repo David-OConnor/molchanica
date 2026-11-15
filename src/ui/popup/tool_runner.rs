@@ -108,7 +108,7 @@ fn recommended_compute(
 /// Which compute target to use for `tool`; orange when it isn't the one selected.
 fn compute_guidance(tool: Tool, target: ComputeTarget, adapter: Option<&AdapterInfo>, ui: &mut Ui) {
     let Some((recommended, reason)) = recommended_compute(tool, adapter) else {
-        ui.small("Checking local GPU support…");
+        ui.label("Checking local GPU support…");
         ui.request_repaint_after(Duration::from_millis(100));
 
         return;
@@ -116,7 +116,7 @@ fn compute_guidance(tool: Tool, target: ComputeTarget, adapter: Option<&AdapterI
 
     let text = format!("{} compute recommended · {reason}", recommended.label());
     if recommended == target {
-        ui.small(text);
+        ui.label(text);
     } else {
         ui.colored_label(Color32::ORANGE, text);
     }

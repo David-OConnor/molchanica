@@ -3,7 +3,7 @@
 use std::fs;
 
 use chrono::Local;
-use egui::{Button, RichText, TextEdit, Ui};
+use egui::{Button, Color32, FontSelection, RichText, TextBuffer, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::molecules::{MolGenericRef, MolType, MoleculeGeneric, aa_color};
 use na_seq::{AaIdent, AminoAcid, SeqType, Sequence, SequenceData};
@@ -24,9 +24,17 @@ use crate::{
     util::{handle_err, handle_success, make_egui_color},
 };
 
+use super::sequence_input::{
+    INVALID_LETTER_COLOR, create_button, layout, letter_counts, status_label,
+};
+
 /// The amino acid buttons wrap at this width.
 const SECTION_WIDTH: f32 = 800.;
 const SEQ_INPUT_WIDTH: f32 = 400.;
+
+fn is_amino_acid_letter(ch: char) -> bool {
+    ch.is_ascii() && AminoAcid::from_u8_letter(ch as u8).is_ok()
+}
 
 /// Parse the single-letter amino acid codes entered. Whitespace, digits and gaps are ignored.
 fn parse_seq(text: &str) -> Result<Vec<AminoAcid>, String> {
@@ -94,19 +102,25 @@ pub(in crate::ui) fn geometry_selector(ui: &mut Ui, geometry: &mut PeptideGeomet
     }
 }
 
-pub(in crate::ui) fn create_peptide_button(ui: &mut Ui) -> bool {
-    ui.button(RichText::new("Create peptide").color(COLOR_ACTION))
-        .on_hover_text(
-            "Create a peptide from this sequence using the selected initial geometry \
+pub(in crate::ui) fn create_peptide_button(ui: &mut Ui, enabled: bool) -> bool {
+    ui.add_enabled(
+        enabled,
+        create_button("Create peptide", COLOR_ACTION, enabled),
+    )
+    .on_hover_text(
+        "Create a peptide from this sequence using the selected initial geometry \
             and Amber residue templates.",
-        )
-        .clicked()
+    )
+    .clicked()
 }
 
-pub(in crate::ui) fn create_folded_button(ui: &mut Ui) -> bool {
-    ui.button(RichText::new("Create folded").color(COLOR_HIGHLIGHT))
-        .on_hover_text("Open the Predict structure tab, with this sequence as its input.")
-        .clicked()
+pub(in crate::ui) fn create_folded_button(ui: &mut Ui, enabled: bool) -> bool {
+    ui.add_enabled(
+        enabled,
+        create_button("Create folded", COLOR_HIGHLIGHT, enabled),
+    )
+    .on_hover_text("Open the Predict structure tab, with this sequence as its input.")
+    .clicked()
 }
 
 pub(in crate::ui) const CREATE_SEQ_TEXT: &str = "Create sequence";
@@ -115,8 +129,8 @@ pub(in crate::ui) const CREATE_SEQ_HOVER: &str =
 
 /// The widget alone, so callers that place it at an exact rect (`Ui::put`) can share it. Pair
 /// with `CREATE_SEQ_HOVER`.
-pub(in crate::ui) fn create_seq_btn() -> Button<'static> {
-    Button::new(RichText::new(CREATE_SEQ_TEXT).color(COLOR_ACTION))
+pub(in crate::ui) fn create_seq_btn(enabled: bool) -> Button<'static> {
+    create_button(CREATE_SEQ_TEXT, COLOR_ACTION, enabled)
 }
 
 /// Add a standalone amino acid sequence from single-letter codes, and make it the active one.
@@ -240,23 +254,40 @@ pub(in crate::ui) fn aa_section(
                 let help_text = "Enter the amino acid sequence, as single-letter codes, \
                     from the N terminus to the C terminus";
 
+                let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
+                    let font_id = FontSelection::Default.resolve(ui.style());
+
+                    layout(ui, text.as_str(), wrap_width, font_id, |ch| {
+                        if is_amino_acid_letter(ch) {
+                            Color32::PLACEHOLDER
+                        } else {
+                            INVALID_LETTER_COLOR
+                        }
+                    })
+                };
+
                 ui.label("Seq").on_hover_text(help_text);
 
                 ui.add(
                     TextEdit::multiline(&mut state.ui.aa_seq_to_create)
                         .desired_width(SEQ_INPUT_WIDTH)
-                        .desired_rows(2),
+                        .desired_rows(2)
+                        .layouter(&mut layouter),
                 )
                 .on_hover_text(help_text);
 
-                if create_peptide_button(ui) {
+                let (valid, invalid) =
+                    letter_counts(&state.ui.aa_seq_to_create, is_amino_acid_letter);
+                let can_create = valid > 0 && invalid == 0;
+
+                if create_peptide_button(ui, can_create) {
                     match parse_seq(&state.ui.aa_seq_to_create) {
                         Ok(seq) => create_peptide(&seq, state, scene, updates),
                         Err(e) => handle_err(&mut state.ui, e),
                     }
                 }
 
-                if create_folded_button(ui) {
+                if create_folded_button(ui, can_create) {
                     match parse_seq(&state.ui.aa_seq_to_create) {
                         Ok(seq) => create_folded(make_sequence(seq, None), state),
                         Err(e) => handle_err(&mut state.ui, e),
@@ -264,13 +295,15 @@ pub(in crate::ui) fn aa_section(
                 }
 
                 if ui
-                    .add(create_seq_btn())
+                    .add_enabled(can_create, create_seq_btn(can_create))
                     .on_hover_text(CREATE_SEQ_HOVER)
                     .clicked()
                 {
                     let text = state.ui.aa_seq_to_create.clone();
                     create_sequence(&text, None, state);
                 }
+
+                status_label(ui, valid, invalid, "amino acid");
             });
         });
     });

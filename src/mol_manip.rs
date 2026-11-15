@@ -551,7 +551,10 @@ pub(crate) fn apply_values(state: &mut State, before: &Pose, values: &TransformV
             return false;
         };
 
-        state.mol_editor.md.pull_target = Some((i, (*position + values.translation).into()));
+        state
+            .mol_editor
+            .md
+            .set_pull_target(i, (*position + values.translation).into());
 
         return true;
     }
@@ -1013,7 +1016,7 @@ pub(crate) fn end_transform(
     state.ui.left_click_down = false;
     scene.input_settings.control_scheme = state.volatile.control_scheme_prev;
     finish_pocket(state, scene, mode, redraw, updates);
-    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.clear_pull();
     if state.volatile.operating_mode == OperatingMode::MolEditor && !imd_pull {
         crate::mol_editor::sync_md(state);
     }
@@ -1031,7 +1034,7 @@ pub(crate) fn discard_editor_transform(state: &mut State, scene: &mut Scene) {
     manip.dragged = None;
     manip.constraint = Constraint::Free;
     manip.numeric.clear();
-    state.mol_editor.md.pull_target = None;
+    state.mol_editor.md.clear_pull();
     state.ui.left_click_down = false;
 }
 

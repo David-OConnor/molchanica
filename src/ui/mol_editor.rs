@@ -347,7 +347,7 @@ pub(in crate::ui) fn editor(
             if started {
                 mol_editor::ensure_dynamics(state);
             } else if !state.mol_editor.md.running {
-                state.mol_editor.md.pull_target = None;
+                state.mol_editor.md.clear_pull();
             }
 
             if state.mol_editor.md.running && state.mol_editor.md.rebuild_required {
@@ -587,11 +587,16 @@ fn simulation_controls(state: &mut State, ui: &mut Ui) {
 
     ui.horizontal_wrapped(|ui| {
         section_box().show(ui, |ui| {
-            ui.add(Slider::new(&mut state.mol_editor.md.steps_per_update, 1..=100).text("IMD speed"))
+            ui.label("IMD speed:");
+            ui.add(Slider::new(&mut state.mol_editor.md.steps_per_update, 1..=100))
                 .on_hover_text("Integration steps per update. Slower machines may run fewer steps to keep input responsive.");
-            ui.add(Slider::new(&mut state.mol_editor.md.dt, DT_MIN..=DT_MAX).logarithmic(true).text("Step (ps)"))
+
+            ui.label("Step (ps):");
+            ui.add(Slider::new(&mut state.mol_editor.md.dt, DT_MIN..=DT_MAX).logarithmic(true))
                 .on_hover_text("Integration timestep. Smaller steps resolve fast bond vibrations.");
-            ui.add(Slider::new(&mut state.mol_editor.md.pull_strength, 1.0..=100.0).text("Pull strength"))
+
+            ui.label("Pull strength:");
+            ui.add(Slider::new(&mut state.mol_editor.md.pull_strength, 1.0..=100.0))
                 .on_hover_text("Spring stiffness in kcal/mol/Å². Pull force is capped at 100 kcal/mol/Å.");
         });
 
