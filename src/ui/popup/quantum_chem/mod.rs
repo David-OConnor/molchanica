@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
-use egui::{CollapsingHeader, Grid, Ui};
+use egui::{CollapsingHeader, Color32, Grid, RichText, Ui};
 use egui_file_dialog::{FileDialogConfig, Filter};
 use graphics::{EngineUpdates, Scene};
 use serde_json::Value;
@@ -123,7 +123,8 @@ pub(super) fn summary_ui(details: &Value, lists: &mut PageLists, ui: &mut Ui) {
     });
 
     if let Some(energy) = details["energy_hartree"].as_f64() {
-        ui.label(format!("Current energy  {energy:.12} Eₕ"));
+        ui.label(format!("Current energy"));
+        ui.label(RichText::new(format!("{energy:.12} Eₕ")).color(Color32::WHITE));
     }
 
     if let Some(modes) = details["vibrational_modes"].as_array() {
@@ -183,7 +184,9 @@ pub(super) fn summary_ui(details: &Value, lists: &mut PageLists, ui: &mut Ui) {
                         Grid::new(key).striped(true).show(ui, |ui| {
                             for (name, value) in variables {
                                 ui.label(name);
-                                ui.monospace(format_value(value));
+                                ui.monospace(
+                                    RichText::new(format_value(value)).color(Color32::WHITE),
+                                );
                                 ui.end_row();
                             }
                         });

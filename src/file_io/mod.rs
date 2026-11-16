@@ -28,8 +28,8 @@ use graphics::{ControlScheme, EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::{
     molecules::{
-        Atom, Bond, MolIdent, MolType, MoleculeGeneric, PHARMACOPHORE_POCKET_ATOMS_KEY,
-        POCKET_METADATA_KEY,
+        Atom, Bond, MolGenericRef, MolIdent, MolType, MoleculeGeneric,
+        PHARMACOPHORE_POCKET_ATOMS_KEY, POCKET_METADATA_KEY,
         common::{MoleculeCommon, bonds_avail},
         lipid::MoleculeLipid,
         nucleic_acid::{MoleculeNucleicAcid, NucleicAcidType},
@@ -50,6 +50,9 @@ use crate::{
         wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids, draw_all_pockets},
     },
     external_tools::{Tool, find_executable},
+    file_io::managed_mols::{
+        MOL_TYPE_KEY, MOL_TYPE_LIPID, ManagedMolManifest, NUCLEIC_ACID_TYPE_KEY,
+    },
     md::{trajectory::Trajectory, viewer::SnapshotViewer},
     mol_db::ParquetMolDb,
     nucleic_acid_creation::nucleotide,
@@ -146,11 +149,44 @@ pub(crate) struct SessionRestoreItem {
     pub payload: SessionRestorePayload,
 }
 
-/// Load a nucleic acid or lipid from a creation panel's managed Mol2.
+/// Load a Mol2. A nucleic acid or lipid if it's from a creation panel, either managed or saved by
+/// the user; otherwise a small molecule or pocket.
+fn mol_from_mol2(
+    mol2: Mol2,
+    manifest: Option<&ManagedMolManifest>,
+    path: &Path,
+) -> io::Result<MoleculeGeneric> {
+    // A user-saved file has no manifest; its metadata marks the type.
+    let created_type = manifest.and_then(|m| m.created_mol_type()).or_else(|| {
+        if mol2.metadata.contains_key(NUCLEIC_ACID_TYPE_KEY) {
+            Some(MolType::NucleicAcid)
+        } else if mol2.metadata.get(MOL_TYPE_KEY).map(String::as_str) == Some(MOL_TYPE_LIPID) {
+            Some(MolType::Lipid)
+        } else {
+            None
+        }
+    });
+
+    if let Some(mol_type) = created_type {
+        return created_mol_from_mol2(mol2, mol_type, manifest.map(|m| m.query.as_str()), path);
+    }
+
+    let mut m: MoleculeSmall = mol2.try_into()?;
+    m.common.update_path(path);
+
+    Ok(if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
+        MoleculeGeneric::Pocket(m.common.into())
+    } else {
+        MoleculeGeneric::Small(m)
+    })
+}
+
+/// Load a nucleic acid or lipid from a creation panel's Mol2. `query` is the managed manifest's;
+/// for nucleic acids, the sequence stored in the file supersedes it.
 fn created_mol_from_mol2(
     mol2: Mol2,
     mol_type: MolType,
-    query: &str,
+    query: Option<&str>,
     path: &Path,
 ) -> io::Result<MoleculeGeneric> {
     let mut atoms: Vec<Atom> = mol2.atoms.iter().map(|a| a.into()).collect();
@@ -176,7 +212,11 @@ fn created_mol_from_mol2(
     Ok(match mol_type {
         MolType::NucleicAcid => {
             // Set by `MoleculeNucleicAcid::from_seq`.
-            let na_type = match common.metadata.get("nucleic_acid_type").map(String::as_str) {
+            let na_type = match common
+                .metadata
+                .get(NUCLEIC_ACID_TYPE_KEY)
+                .map(String::as_str)
+            {
                 Some("rna") => NucleicAcidType::Rna,
                 _ => NucleicAcidType::Dna,
             };
@@ -185,6 +225,7 @@ fn created_mol_from_mol2(
                 na_type,
                 common,
                 seq: query
+                    .unwrap_or_default()
                     .chars()
                     .filter_map(|ch| nucleotide(ch, na_type))
                     .collect(),
@@ -254,23 +295,7 @@ pub(crate) fn parse_session_history(
                         MoleculeGeneric::Small(molecule)
                     }
                 }
-                "mol2" => {
-                    let mol2 = Mol2::load(path)?;
-
-                    if let Some(manifest) = &manifest
-                        && let Some(mol_type) = manifest.created_mol_type()
-                    {
-                        created_mol_from_mol2(mol2, mol_type, &manifest.query, path)?
-                    } else {
-                        let mut molecule: MoleculeSmall = mol2.try_into()?;
-                        molecule.common.update_path(path);
-                        if molecule.common.metadata.contains_key(POCKET_METADATA_KEY) {
-                            MoleculeGeneric::Pocket(molecule.common.into())
-                        } else {
-                            MoleculeGeneric::Small(molecule)
-                        }
-                    }
-                }
+                "mol2" => mol_from_mol2(Mol2::load(path)?, manifest.as_ref(), path)?,
                 "xyz" => MoleculeGeneric::Small(MoleculeSmall::from_xyz(Xyz::load(path)?, path)?),
                 "pdbqt" => {
                     let mut molecule: MoleculeSmall = Pdbqt::load(path)?.try_into()?;
@@ -420,7 +445,7 @@ impl State {
     fn load_managed_mol_companions(
         &mut self,
         path: &Path,
-    ) -> io::Result<Option<managed_mols::ManagedMolManifest>> {
+    ) -> io::Result<Option<ManagedMolManifest>> {
         let Some(manifest) = managed_mols::read_manifest(&self.volatile.prefs_dir, path)? else {
             return Ok(None);
         };
@@ -532,24 +557,7 @@ impl State {
                     Ok(MoleculeGeneric::Small(m))
                 }
             }
-            "mol2" => {
-                let mol2 = Mol2::load(path)?;
-
-                if let Some(manifest) = &managed_manifest
-                    && let Some(mol_type) = manifest.created_mol_type()
-                {
-                    created_mol_from_mol2(mol2, mol_type, &manifest.query, path)
-                } else {
-                    let mut m: MoleculeSmall = mol2.try_into()?;
-                    m.common.update_path(path);
-
-                    if m.common.metadata.contains_key(POCKET_METADATA_KEY) {
-                        Ok(MoleculeGeneric::Pocket(m.common.into()))
-                    } else {
-                        Ok(MoleculeGeneric::Small(m))
-                    }
-                }
-            }
+            "mol2" => mol_from_mol2(Mol2::load(path)?, managed_manifest.as_ref(), path),
             "xyz" => {
                 let mut m = MoleculeSmall::from_xyz(Xyz::load(path)?, path)?;
                 m.common.update_path(path);
@@ -876,6 +884,19 @@ impl State {
         let binding = path.extension().unwrap_or_default().to_ascii_lowercase();
         let extension = binding.to_str().unwrap_or_default();
 
+        // These formats drop the atom names and FF types that nucleic acids and lipids need.
+        if matches!(extension, "sdf" | "mol" | "xyz" | "pdbqt")
+            && matches!(
+                self.active_mol(),
+                Some(MolGenericRef::NucleicAcid(_) | MolGenericRef::Lipid(_))
+            )
+        {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "Nucleic acids and lipids can only be saved as Mol2",
+            ));
+        }
+
         let open_type = match extension {
             "mdp" => {
                 let setup = &self.volatile.md_local.gromacs_setup;
@@ -928,6 +949,14 @@ impl State {
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
             "mol2" => match self.active_mol() {
+                Some(mol @ MolGenericRef::NucleicAcid(_)) => {
+                    managed_mols::created_mol_to_mol2(&mol)?.save(path)?;
+                    OpenType::NucleicAcid
+                }
+                Some(mol @ MolGenericRef::Lipid(_)) => {
+                    managed_mols::created_mol_to_mol2(&mol)?.save(path)?;
+                    OpenType::Lipid
+                }
                 Some(mol) => {
                     mol.to_mol2()?.save(path)?;
 
@@ -1020,7 +1049,7 @@ impl State {
             OpenType::Peptide => self
                 .peptide_for_tools()
                 .and_then(|mol| mol.common.path.clone()),
-            OpenType::Ligand | OpenType::Pocket => {
+            OpenType::Ligand | OpenType::Pocket | OpenType::NucleicAcid | OpenType::Lipid => {
                 self.active_mol().and_then(|mol| mol.common().path.clone())
             }
             _ => None,
@@ -1040,7 +1069,7 @@ impl State {
                         mol.common.update_path(path);
                     }
                 }
-                OpenType::Ligand | OpenType::Pocket => {
+                OpenType::Ligand | OpenType::Pocket | OpenType::NucleicAcid | OpenType::Lipid => {
                     if let Some(mut mol) = self.active_mol_mut() {
                         mol.common_mut().update_path(path);
                     }
@@ -1053,7 +1082,7 @@ impl State {
         // molecule's identifier in the open history.
         let ident = match open_type {
             OpenType::Peptide => self.peptide_for_tools().map(|mol| mol.common.ident.clone()),
-            OpenType::Ligand | OpenType::Pocket => {
+            OpenType::Ligand | OpenType::Pocket | OpenType::NucleicAcid | OpenType::Lipid => {
                 self.active_mol().map(|m| m.common().ident.clone())
             }
             _ => None,

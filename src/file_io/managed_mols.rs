@@ -10,7 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use bio_files::{MmCif, Sdf, SdfFormat, fasta::Fasta};
+use bio_files::{MmCif, Mol2, Sdf, SdfFormat, fasta::Fasta};
 use chrono::Utc;
 use mol_defs::molecules::{
     MolGenericRef, MolIdent, MolType, nucleic_acid::MoleculeNucleicAcid, small::MoleculeSmall,
@@ -18,16 +18,27 @@ use mol_defs::molecules::{
 use na_seq::Sequence;
 use serde::{Deserialize, Serialize};
 
-use crate::project::SavedResidue;
+use crate::{
+    nucleic_acid_creation::{base_letter, nucleotide},
+    project::SavedResidue,
+};
 
 const MANAGED_MOLS_DIR: &str = "managed_molecules";
 const MANIFEST_FILE: &str = "manifest.json";
 const NUCLEIC_ACID_RESIDUES: &str = "nucleic_acid_residues";
+/// Mol2 metadata marking a nucleic acid; set by `MoleculeNucleicAcid::from_seq`.
+pub(super) const NUCLEIC_ACID_TYPE_KEY: &str = "nucleic_acid_type";
+/// Mol2 metadata marking a lipid, which otherwise loads as a small molecule.
+pub(super) const MOL_TYPE_KEY: &str = "mol_type";
+pub(super) const MOL_TYPE_LIPID: &str = "lipid";
 
 #[derive(Deserialize, Serialize)]
 struct NucleicAcidResidues {
     residues: Vec<SavedResidue>,
     second_strand_start: Option<usize>,
+    /// The first strand, 5′→3′. Absent from older managed files; their manifest query holds it.
+    #[serde(default)]
+    seq: Option<String>,
 }
 
 pub(super) fn restore_nucleic_acid_residues(mol: &mut MoleculeNucleicAcid) -> io::Result<()> {
@@ -36,6 +47,13 @@ pub(super) fn restore_nucleic_acid_residues(mol: &mut MoleculeNucleicAcid) -> io
     };
 
     let stored: NucleicAcidResidues = serde_json::from_str(&data)?;
+    if let Some(seq) = &stored.seq {
+        mol.seq = seq
+            .chars()
+            .filter_map(|ch| nucleotide(ch, mol.na_type))
+            .collect();
+    }
+
     let atoms = &mut mol.common.atoms;
     mol.residues = stored
         .residues
@@ -54,6 +72,38 @@ pub(super) fn restore_nucleic_acid_residues(mol: &mut MoleculeNucleicAcid) -> io
     }
 
     Ok(())
+}
+
+/// Mol2 for a nucleic acid or lipid. Keeps atom names, FF types, and charges. Metadata marks the
+/// type; for nucleic acids, it also holds residues and sequence. Loads back via `mol_from_mol2`.
+pub(crate) fn created_mol_to_mol2(mol: &MolGenericRef) -> io::Result<Mol2> {
+    // As `MolGenericRef::to_mol2` does for pockets.
+    let mut mol2 = MoleculeSmall {
+        common: mol.common().clone(),
+        ..Default::default()
+    }
+    .to_mol2();
+
+    match mol {
+        MolGenericRef::NucleicAcid(m) => {
+            let stored = NucleicAcidResidues {
+                residues: m.residues.iter().map(SavedResidue::capture).collect(),
+                second_strand_start: m.common.atoms.iter().position(|a| a.chain == Some(1)),
+                seq: Some(m.seq.iter().map(|&nt| base_letter(nt, m.na_type)).collect()),
+            };
+            mol2.metadata.insert(
+                NUCLEIC_ACID_RESIDUES.to_owned(),
+                serde_json::to_string(&stored)?,
+            );
+        }
+        MolGenericRef::Lipid(_) => {
+            mol2.metadata
+                .insert(MOL_TYPE_KEY.to_owned(), MOL_TYPE_LIPID.to_owned());
+        }
+        _ => (),
+    }
+
+    Ok(mol2)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -448,22 +498,7 @@ pub(crate) fn store_created(
             write_atomically(&main_path, |path| cif.save(path))?;
         }
         _ => {
-            // As `MolGenericRef::to_mol2` does for pockets.
-            let mut mol2 = MoleculeSmall {
-                common: mol.common().clone(),
-                ..Default::default()
-            }
-            .to_mol2();
-            if let MolGenericRef::NucleicAcid(m) = mol {
-                let stored = NucleicAcidResidues {
-                    residues: m.residues.iter().map(SavedResidue::capture).collect(),
-                    second_strand_start: m.common.atoms.iter().position(|a| a.chain == Some(1)),
-                };
-                mol2.metadata.insert(
-                    NUCLEIC_ACID_RESIDUES.to_owned(),
-                    serde_json::to_string(&stored)?,
-                );
-            }
+            let mol2 = created_mol_to_mol2(&mol)?;
             write_atomically(&main_path, |path| mol2.save(path))?;
         }
     }
