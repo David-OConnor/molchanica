@@ -10,7 +10,6 @@ use graphics::{EngineUpdates, EntityUpdate, Scene};
 use lin_alg::f32::Vec3 as Vec3F32;
 use mol_defs::molecules::MolType;
 
-use crate::ui::COLOR_AMBER;
 use crate::{
     button,
     drawing::EntityClass,
@@ -20,9 +19,9 @@ use crate::{
     prefs::ToSave,
     state::State,
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_INACTIVE, ROW_SPACING,
-        flag_btn, misc, num_field, panels::md_viewer, popup::external_tools::install_btn,
-        sidebar::mol_picker::mol_type_color, util::open_dir,
+        COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_AMBER, COLOR_HIGHLIGHT, COLOR_INACTIVE,
+        ROW_SPACING, flag_btn, misc, num_field, panels::md_viewer,
+        popup::external_tools::install_btn, sidebar::mol_picker::mol_type_color, util::open_dir,
     },
     util::{RedrawFlags, handle_err},
 };
@@ -180,7 +179,7 @@ pub fn md_setup(
                 backends.push(MdBackend::Gromacs);
             }
 
-            // todo: For now, we launch Orca MD from its own UI section, but we may
+            // todo: For now, we launch ORCA MD from the quantum chemistry window, but we may
             // todo wish to move it here.
             // if orca_available {
             //     backends.push(MdBackend::Orca);
@@ -305,7 +304,8 @@ pub fn md_setup(
         md::start_md(state, scene, updates);
     }
 
-    md_viewer::dynamics_viewer(state, scene, updates, redraw, ui);
+    // Playback controls display independently of this panel; see `md_viewer::playback`.
+    md_viewer::playback_status(state, scene, updates, redraw, ui);
 }
 
 fn force_field_cfg(state: &mut State, ui: &mut Ui) {

@@ -132,7 +132,6 @@ pub fn dock(
     //     &mut state.volatile.md_local.viewer.peptide_selected,
     // )?;
 
-
     // todo: We may opt for a higher-than-normal DT here.
     let dt = 0.002;
     let n_steps = 800;

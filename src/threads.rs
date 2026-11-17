@@ -29,8 +29,7 @@ use crate::{
     file_io::{SessionRestoreItem, SessionRestorePayload, managed_mols, parse_session_history},
     gromacs::on_gromacs_md_complete,
     mol_db::{ParquetMolDb, load_chebi_mol_db, load_hmdb_mol_db},
-    mol_editor, orca,
-    orca::OrcaRun,
+    mol_editor,
     render::MESH_PEP_SOLVENT_SURFACE,
     sfc_mesh::apply_mesh_colors,
     split_join::{StructureLookup, on_structure_lookup},
@@ -85,8 +84,6 @@ pub struct ThreadReceivers {
     pub ph_screening: Option<Receiver<Vec<PhScreeningScore>>>,
     pub gromacs_md_avail: Option<Receiver<(GromacsOutput, Duration)>>,
     pub xtb_md: Option<crate::xtb::XtbRun>,
-    /// An ORCA run, e.g. geometry optimization or charges; see `orca::launch`.
-    pub orca_run: Option<OrcaRun>,
 }
 
 pub struct SessionRestoreReceiver {
@@ -118,7 +115,6 @@ impl ThreadReceivers {
             || self.ph_screening.is_some()
             || self.gromacs_md_avail.is_some()
             || self.xtb_md.is_some()
-            || self.orca_run.is_some()
     }
 }
 
@@ -410,14 +406,23 @@ fn apply_session_restore_item(
                 }
             }
         }
-        SessionRestorePayload::Trajectory(trajectory) => state.trajectories.push(trajectory),
+        SessionRestorePayload::Trajectory(trajectory, set) => {
+            crate::md::mdposit::register(state, trajectory, set);
+        }
         SessionRestorePayload::ParquetDb(db) => {
             state.volatile.parquet_dbs.push(db);
             if state.volatile.parquet_dbs.len() == 1 {
                 state.volatile.parquet_db_active = Some(crate::state::DbSel::Loaded(0));
             }
         }
-        SessionRestorePayload::MdMols(viewer) => state.volatile.md_local.viewer = viewer,
+        SessionRestorePayload::MdMols(restored) => {
+            let viewer = &mut state.volatile.md_local.viewer;
+            let old_len = viewer.mol_sets.len();
+            viewer.mol_sets.extend(restored.mol_sets);
+            if viewer.mol_set_active.is_none() {
+                viewer.mol_set_active = restored.mol_set_active.map(|i| old_len + i);
+            }
+        }
         SessionRestorePayload::MdParams => {}
         SessionRestorePayload::Sequences(seqs) => state.sequences.extend(seqs),
     }
@@ -1133,27 +1138,4 @@ pub fn handle_thread_rx(
     }
 
     crate::xtb::poll_md(state, scene, updates);
-
-    let orca_result = state
-        .volatile
-        .thread_receivers
-        .orca_run
-        .as_ref()
-        .map(OrcaRun::try_recv);
-
-    match orca_result {
-        Some(Ok(result)) => {
-            if let Some(run) = state.volatile.thread_receivers.orca_run.take() {
-                orca::on_run_complete(state, run, result, redraw);
-            }
-        }
-        Some(Err(TryRecvError::Disconnected)) => {
-            state.volatile.thread_receivers.orca_run = None;
-            handle_err(
-                &mut state.ui,
-                "The ORCA run stopped without returning a result".to_owned(),
-            );
-        }
-        Some(Err(TryRecvError::Empty)) | None => {}
-    }
 }

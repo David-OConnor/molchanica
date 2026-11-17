@@ -1123,9 +1123,7 @@ fn show_playback(
     md.viewer.mol_set_active = Some(set_i);
     md.replace_snaps(snapshots);
 
-    for traj in &mut state.trajectories {
-        traj.ui_active = false;
-    }
+    super::trajectory::set_viewed(&mut state.trajectories, None);
     trajectory.run_mol_set_path = path.clone();
     if let Some(traj) = state
         .trajectories

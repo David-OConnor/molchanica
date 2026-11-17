@@ -27,6 +27,7 @@ use crate::{
     },
     file_io::gemmi_dir,
     label,
+    md::mdposit,
     peptide_ligands::{LigAttachUi, detach_het_res, remove_het_res},
     render::MESH_POCKET_START,
     selection::{SelAtom, Selection},
@@ -623,6 +624,18 @@ fn display_peptide_actions(
                     PeptideIdent::Emdb(id) => emdb::open_overview(id),
                     PeptideIdent::Bmrb(id) => bmrb::open_overview(id),
                 }
+            }
+        }
+
+        if let Some(pdb_id) = mdposit::pdb_id(&pep.idents) {
+            let button = ui
+                .button("MdPosit Traj")
+                .on_hover_text(format!("Find MDposit trajectories for {pdb_id}."));
+            if button.clicked() {
+                state
+                    .volatile
+                    .mdposit
+                    .open(pdb_id, button.rect.left_bottom(), ui.ctx());
             }
         }
 

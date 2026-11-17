@@ -53,7 +53,11 @@ use crate::{
     file_io::managed_mols::{
         MOL_TYPE_KEY, MOL_TYPE_LIPID, ManagedMolManifest, NUCLEIC_ACID_TYPE_KEY,
     },
-    md::{trajectory::Trajectory, viewer::SnapshotViewer},
+    md::{
+        mdposit,
+        trajectory::Trajectory,
+        viewer::{SnapshotViewer, ViewerMolSet},
+    },
     mol_db::ParquetMolDb,
     nucleic_acid_creation::nucleotide,
     pocket_render::PocketRender,
@@ -136,7 +140,7 @@ pub(crate) enum SessionRestorePayload {
     Density(DensityMap),
     GeneralForceField(ForceFieldParams),
     SpecificForceField(String, ForceFieldParams),
-    Trajectory(Trajectory),
+    Trajectory(Trajectory, Option<ViewerMolSet>),
     ParquetDb(ParquetMolDb),
     MdMols(SnapshotViewer),
     MdParams,
@@ -392,7 +396,11 @@ pub(crate) fn parse_session_history(
                 }
             }
         }
-        OpenType::Trajectory => SessionRestorePayload::Trajectory(Trajectory::new(path)?),
+        OpenType::Trajectory => {
+            let (trajectory, set) = mdposit::open_trajectory(path, prefs_dir)?;
+
+            SessionRestorePayload::Trajectory(trajectory, set)
+        }
         OpenType::MdParams => SessionRestorePayload::MdParams,
         OpenType::ParquetDb => SessionRestorePayload::ParquetDb(ParquetMolDb::new(path)?),
         OpenType::MdMols => {
@@ -832,8 +840,8 @@ impl State {
 
     /// Open a MD trajectory. E.g. TRR, DCD, XTC file. This is a trajectory of a MD run.
     pub fn open_trajectory(&mut self, path: &Path) -> io::Result<()> {
-        let traj = Trajectory::new(path)?;
-        self.trajectories.push(traj);
+        let (trajectory, set) = mdposit::open_trajectory(path, &self.volatile.prefs_dir)?;
+        mdposit::register(self, trajectory, set);
 
         self.update_history(path, OpenType::Trajectory, None);
         self.update_save_prefs();

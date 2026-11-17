@@ -1,47 +1,848 @@
-use std::{collections::HashMap, path::Path};
+//! The quantum chemistry window. Psi4 runs through the shared tool runner; ORCA through its own
+//! form ([`orca`]) and the same runner's progress, history, and results browser.
 
-use egui::{CollapsingHeader, Color32, Grid, RichText, Ui};
+pub(super) mod orca;
+
+use std::{
+    collections::HashMap,
+    fs,
+    hash::{DefaultHasher, Hash, Hasher},
+    io,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+
+use egui::{
+    CollapsingHeader, Color32, ComboBox, Grid, RichText, ScrollArea, TextBuffer, TextEdit,
+    TextFormat, TextStyle, Ui, text::LayoutJob,
+};
 use egui_file_dialog::{FileDialogConfig, Filter};
 use graphics::{EngineUpdates, Scene};
+use lin_alg::f64::Vec3;
+use mol_defs::molecules::common::MoleculeCommon;
+use na_seq::Element;
 use serde_json::Value;
 
 use super::{
     compute_selector,
-    external_tools::install_btn,
+    external_tools::{install_btn, tool_links},
     flex_lists::PageLists,
     remote_token_ui,
     tool_runner::{ToolWindowKind, tool_window},
 };
 use crate::{
     external_tools::{self, Tool, remote::ComputeTarget, tool_form::FormField},
+    orca::{Choice, MolTarget, OrcaJob, electron_count, overridden, read_xyz_positions},
     state::State,
+    ui::{COL_SPACING, COLOR_AMBER},
+    util::{RedrawFlags, handle_err, handle_success},
 };
+
+/// The backends this window offers.
+const BACKENDS: [Tool; 2] = [Tool::Psi4, Tool::Orca];
+
+/// Work the tool window asks of this window, which needs the rest of the program's state.
+pub(super) enum QcRequest {
+    /// Put the active molecule's atoms in the Psi4 geometry.
+    Psi4Geometry,
+    /// Write the ORCA input text from its parameters and the active molecule.
+    OrcaText,
+    OrcaRun,
+    Apply(QcApply),
+}
+
+/// A result to apply to the molecule a run was made from.
+pub(super) enum QcApply {
+    Geometry {
+        target: MolTarget,
+        path: PathBuf,
+    },
+    Charges {
+        target: MolTarget,
+        scheme: String,
+        values: Vec<f64>,
+    },
+}
 
 pub(super) fn window(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
     ui: &mut Ui,
 ) {
+    let qc = state.ui.tool_windows.quantum_chem();
+    let busy = qc.busy();
+    let mut tool = qc.tool();
+
     ui.horizontal(|ui| {
+        ui.label("Backend");
+        ui.add_enabled_ui(!busy, |ui| {
+            ComboBox::from_id_salt("qc_backend")
+                .selected_text(tool.spec().name())
+                .show_ui(ui, |ui| {
+                    for backend in BACKENDS {
+                        ui.selectable_value(&mut tool, backend, backend.spec().name())
+                            .on_hover_text(backend.spec().summary());
+                    }
+                });
+        });
+
+        ui.add_space(COL_SPACING);
         compute_selector(
             ui,
             &mut state.to_save.quantum_compute_target,
             "Run on this computer's CPU. Install the selected backend first.",
         );
+
+        ui.add_space(COL_SPACING);
+        tool_links(tool, ui);
     });
+    state.ui.tool_windows.quantum_chem().set_tool(tool);
 
     if state.to_save.quantum_compute_target == ComputeTarget::Remote {
-        remote_token_ui(ui, &mut state.to_save.athanor_api_token);
-    } else if state.ui.external_tools.has_pending_job(Tool::Psi4)
-        || !external_tools::is_installed(Tool::Psi4)
-    {
-        install_btn(state, Tool::Psi4, ui);
+        if tool == Tool::Orca {
+            ui.label(
+                RichText::new("ORCA isn't available remotely. Set Compute to Local to run it.")
+                    .color(COLOR_AMBER),
+            );
+        } else {
+            remote_token_ui(ui, &mut state.to_save.athanor_api_token);
+        }
+    } else if state.ui.external_tools.has_pending_job(tool) || !external_tools::is_installed(tool) {
+        install_btn(state, tool, ui);
     }
 
     ui.separator();
+
+    let active = active_mol(state);
+    state.ui.tool_windows.quantum_chem().active_mol = active;
+    refresh_orca_preview(state);
     tool_window(state, ToolWindowKind::QuantumChemistry, scene, updates, ui);
+
+    if let Some(request) = state.ui.tool_windows.quantum_chem().take_request() {
+        handle_request(state, request, redraw, ui);
+    }
 }
+
+/// Each atom's element and current position.
+fn atom_positions(common: &MoleculeCommon) -> impl Iterator<Item = (Element, Vec3)> + '_ {
+    let absolute = common.atom_posits.len() == common.atoms.len();
+
+    common.atoms.iter().enumerate().map(move |(i, atom)| {
+        let posit = if absolute {
+            common.atom_posits[i]
+        } else {
+            atom.posit
+        };
+
+        (atom.element, posit)
+    })
+}
+
+/// The active molecule's atoms, and how to find it again.
+fn active_geometry(state: &State) -> Option<(MolTarget, Vec<(Element, Vec3)>)> {
+    let (mol_type, index) = state.volatile.active_mol?;
+    let mol = state.get_mol(mol_type, index)?;
+    let common = mol.common();
+    let geometry = atom_positions(common).collect();
+
+    let target = MolTarget {
+        mol_type,
+        index,
+        ident: common.ident.clone(),
+        atom_count: common.atoms.len(),
+    };
+
+    Some((target, geometry))
+}
+
+/// Changes when the active molecule, or its atoms, do.
+fn geometry_fingerprint(state: &State) -> Option<u64> {
+    let (mol_type, index) = state.volatile.active_mol?;
+    let mol = state.get_mol(mol_type, index)?;
+    let common = mol.common();
+
+    let mut hasher = DefaultHasher::new();
+    (index, &common.ident).hash(&mut hasher);
+    for (element, posit) in atom_positions(common) {
+        (
+            element,
+            posit.x.to_bits(),
+            posit.y.to_bits(),
+            posit.z.to_bits(),
+        )
+            .hash(&mut hasher);
+    }
+
+    Some(hasher.finish())
+}
+
+/// Remake the ORCA input preview if its parameters, or the active molecule, changed.
+fn refresh_orca_preview(state: &mut State) {
+    let window = state.ui.tool_windows.quantum_chem();
+    if window.tool() != Tool::Orca || window.orca.mode != orca::InputMode::Parameters {
+        return;
+    }
+
+    let fingerprint = geometry_fingerprint(state);
+    if !state
+        .ui
+        .tool_windows
+        .quantum_chem()
+        .orca
+        .preview_stale(fingerprint)
+    {
+        return;
+    }
+
+    let geometry = active_geometry(state);
+    let geometry = geometry
+        .as_ref()
+        .map(|(target, atoms)| (target.ident.as_str(), atoms.as_slice()));
+    state
+        .ui
+        .tool_windows
+        .quantum_chem()
+        .orca
+        .update_preview(geometry, fingerprint);
+}
+
+fn active_mol(state: &State) -> Option<orca::ActiveMol> {
+    let mol = state.active_mol()?;
+    let common = mol.common();
+    let atoms = &common.atoms;
+
+    let charge_sum = atoms
+        .iter()
+        .map(|atom| atom.partial_charge)
+        .sum::<Option<f32>>()
+        .filter(|_| !atoms.is_empty());
+
+    Some(orca::ActiveMol {
+        name: common.name.clone().unwrap_or_else(|| common.ident.clone()),
+        atom_count: atoms.len(),
+        electrons: electron_count(atoms.iter().map(|atom| atom.element)),
+        charge_sum,
+        has_hydrogens: atoms.iter().any(|atom| atom.element == Element::Hydrogen),
+    })
+}
+
+fn handle_request(state: &mut State, request: QcRequest, redraw: &mut RedrawFlags, ui: &Ui) {
+    let geometry = match request {
+        QcRequest::Apply(_) => None,
+        _ => active_geometry(state),
+    };
+    let computations = &state.volatile.ongoing_computations;
+    let window = state.ui.tool_windows.quantum_chem();
+
+    match request {
+        QcRequest::Psi4Geometry => match geometry {
+            Some((target, atoms)) => {
+                let coordinates = atoms
+                    .iter()
+                    .map(|(element, p)| {
+                        format!(
+                            "{:<2} {:>14.6} {:>14.6} {:>14.6}",
+                            element.to_letter(),
+                            p.x,
+                            p.y,
+                            p.z
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                window.set_psi4_geometry(coordinates, &target.ident);
+            }
+            None => window.set_error("No active molecule. Select one first.".to_owned()),
+        },
+        QcRequest::OrcaText => {
+            let text = match &geometry {
+                Some((target, atoms)) => window.orca.params.make_input(Some(atoms), &target.ident),
+                None => window.orca.params.make_input(None, "Molecule"),
+            };
+            window.orca.set_text_from_params(text);
+
+            if geometry.is_none() {
+                window.set_error(
+                    "No active molecule. Add atoms between the * lines, or select a molecule \
+                    and write the input again."
+                        .to_owned(),
+                );
+            }
+        }
+        QcRequest::OrcaRun => {
+            let form = &window.orca;
+            let job = match form.mode {
+                orca::InputMode::Parameters => match geometry {
+                    Some((target, atoms)) => Ok(OrcaJob::from_params(&form.params, &atoms, target)),
+                    None => Err("No active molecule. Select one first.".to_owned()),
+                },
+                orca::InputMode::Text => Ok(OrcaJob::from_text(form.text.clone(), "text")),
+                orca::InputMode::Upload => fs::read_to_string(form.input_file.trim())
+                    .map(|text| OrcaJob::from_text(text, "upload"))
+                    .map_err(|error| format!("Couldn't read the input file: {error}")),
+            };
+
+            match job {
+                Ok(job) => window.start_orca(ui, computations, job),
+                Err(error) => window.set_error(error),
+            }
+        }
+        QcRequest::Apply(apply) => apply_result(state, apply, redraw),
+    }
+}
+
+/// Apply a run's geometry or charges to the molecule it was made from.
+fn apply_result(state: &mut State, apply: QcApply, redraw: &mut RedrawFlags) {
+    let target = match &apply {
+        QcApply::Geometry { target, .. } | QcApply::Charges { target, .. } => target.clone(),
+    };
+
+    let posits = match &apply {
+        QcApply::Geometry { path, .. } => match read_xyz_positions(path) {
+            Ok(posits) => Some(posits),
+            Err(error) => {
+                handle_err(
+                    &mut state.ui,
+                    format!("Couldn't read the final geometry: {error}"),
+                );
+                return;
+            }
+        },
+        QcApply::Charges { .. } => None,
+    };
+
+    let Some(mut mol) = state
+        .get_mol_mut(target.mol_type, target.index)
+        .filter(|mol| mol.common().ident == target.ident)
+    else {
+        handle_err(
+            &mut state.ui,
+            format!(
+                "{} is no longer open; the result wasn't applied.",
+                target.ident
+            ),
+        );
+        return;
+    };
+
+    let count = mol.common().atoms.len();
+    let msg = match apply {
+        QcApply::Geometry { .. } => {
+            let posits = posits.unwrap_or_default();
+            if posits.len() != count {
+                let msg = format!(
+                    "The geometry has {} atoms, but {} has {count}; it wasn't applied.",
+                    posits.len(),
+                    target.ident
+                );
+                handle_err(&mut state.ui, msg);
+                return;
+            }
+
+            mol.common_mut().atom_posits = posits;
+            format!("Applied the ORCA geometry to {}", target.ident)
+        }
+        QcApply::Charges { scheme, values, .. } => {
+            if values.len() != count {
+                let msg = format!(
+                    "{} charges for {} atoms in {}; they weren't assigned.",
+                    values.len(),
+                    count,
+                    target.ident
+                );
+                handle_err(&mut state.ui, msg);
+                return;
+            }
+
+            for (atom, q) in mol.common_mut().atoms.iter_mut().zip(values) {
+                atom.partial_charge = Some(q as f32);
+            }
+            format!("Assigned {scheme} charges to {}", target.ident)
+        }
+    };
+
+    redraw.set(target.mol_type);
+    handle_success(&mut state.ui, msg);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Input preview
+// ---------------------------------------------------------------------------------------------
+
+/// The input a run would use, shown above "Set parameters here" and kept current as they change.
+#[derive(Default)]
+pub(super) struct InputPreview {
+    text: String,
+    /// Per line of `text`: whether the last update changed it.
+    changed: Vec<bool>,
+    error: Option<String>,
+    /// A newer version is being made.
+    pub pending: bool,
+}
+
+impl InputPreview {
+    pub(super) fn set(&mut self, text: String) {
+        self.error = None;
+        if text == self.text {
+            return;
+        }
+
+        let mut old: HashMap<&str, usize> = HashMap::new();
+        for line in self.text.lines() {
+            *old.entry(line).or_default() += 1;
+        }
+        let first = self.text.is_empty();
+
+        self.changed = text
+            .lines()
+            .map(|line| match old.get_mut(line) {
+                Some(count) if *count > 0 => {
+                    *count -= 1;
+                    false
+                }
+                _ => !first,
+            })
+            .collect();
+        self.text = text;
+    }
+
+    pub(super) fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+    }
+}
+
+/// How long Psi4's parameters must be unchanged before its preview is remade. Each conversion
+/// starts Python.
+const PSI4_PREVIEW_DELAY: Duration = Duration::from_millis(400);
+
+/// Keeps the Psi4 preview current: converts the parameters in the background, through the writer
+/// Run uses, once they stop changing.
+#[derive(Default)]
+pub(super) struct Psi4Preview {
+    pub preview: InputPreview,
+    /// The values last converted, or being converted.
+    requested: Option<HashMap<String, String>>,
+    /// Values changed since, and when.
+    waiting: Option<(HashMap<String, String>, Instant)>,
+    receiver: Option<mpsc::Receiver<io::Result<HashMap<String, String>>>>,
+}
+
+impl Psi4Preview {
+    /// Call each frame "Set parameters here" is shown, with its current values.
+    pub(super) fn update(&mut self, values: HashMap<String, String>, ctx: &egui::Context) {
+        if let Some(receiver) = &self.receiver {
+            match receiver.try_recv() {
+                Ok(Ok(mut projected)) => {
+                    self.receiver = None;
+                    self.preview
+                        .set(projected.remove("psi4_input").unwrap_or_default());
+                }
+                Ok(Err(error)) => {
+                    self.receiver = None;
+                    self.preview.set_error(error.to_string());
+                }
+                Err(mpsc::TryRecvError::Disconnected) => self.receiver = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+
+        if self.requested.as_ref() == Some(&values) {
+            self.waiting = None;
+        } else if self
+            .waiting
+            .as_ref()
+            .is_none_or(|(waiting, _)| *waiting != values)
+        {
+            self.waiting = Some((values, Instant::now()));
+        }
+
+        if self.receiver.is_none()
+            && let Some((_, since)) = &self.waiting
+        {
+            // The first preview needn't wait.
+            let delay = if self.requested.is_some() {
+                PSI4_PREVIEW_DELAY
+            } else {
+                Duration::ZERO
+            };
+            let elapsed = since.elapsed();
+
+            if elapsed < delay {
+                ctx.request_repaint_after(delay - elapsed);
+            } else if let Some((values, _)) = self.waiting.take() {
+                let (sender, receiver) = mpsc::channel();
+                let ctx = ctx.clone();
+
+                self.requested = Some(values.clone());
+                self.receiver = Some(receiver);
+
+                thread::spawn(move || {
+                    let _ = sender.send(external_tools::psi4::project(&values, "text"));
+                    ctx.request_repaint();
+                });
+            }
+        }
+
+        self.preview.pending = self.waiting.is_some() || self.receiver.is_some();
+    }
+}
+
+/// The preview, read-only, with lines the last change made highlighted.
+pub(super) fn input_preview_ui(
+    preview: &InputPreview,
+    id: &'static str,
+    max_height: f32,
+    ui: &mut Ui,
+) {
+    CollapsingHeader::new("Input")
+        .id_salt(id)
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("What Run uses. Highlights show your last change.").small());
+                if preview.pending {
+                    ui.spinner();
+                }
+                if ui.small_button("Copy").clicked() {
+                    ui.ctx().copy_text(preview.text.clone());
+                }
+            });
+            if let Some(error) = &preview.error {
+                ui.colored_label(COLOR_AMBER, error);
+            }
+
+            let mut layouter = |ui: &Ui, text: &dyn TextBuffer, wrap_width: f32| {
+                let font_id = TextStyle::Monospace.resolve(ui.style());
+                let color = ui.visuals().text_color();
+                let highlight = ui.visuals().selection.bg_fill.gamma_multiply(0.6);
+
+                let mut job = LayoutJob::default();
+                job.wrap.max_width = wrap_width;
+                for (i, line) in text.as_str().split_inclusive('\n').enumerate() {
+                    let mut format = TextFormat::simple(font_id.clone(), color);
+                    if preview.changed.get(i) == Some(&true) {
+                        format.background = highlight;
+                    }
+                    job.append(line, 0., format);
+                }
+
+                ui.fonts_mut(|fonts| fonts.layout_job(job))
+            };
+
+            ScrollArea::vertical()
+                .id_salt(id)
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    ui.add(
+                        TextEdit::multiline(&mut preview.text.as_str())
+                            .code_editor()
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY)
+                            .layouter(&mut layouter),
+                    );
+                });
+        });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Dropdowns with text overrides
+// ---------------------------------------------------------------------------------------------
+
+/// A text box whose contents, when not blank, replace the dropdown to its left.
+pub(super) fn override_box(ui: &mut Ui, custom: &mut String) {
+    ui.add(
+        TextEdit::singleline(custom)
+            .hint_text("Other…")
+            .desired_width(150.),
+    )
+    .on_hover_text("Anything typed here is used instead of the dropdown's choice.");
+}
+
+/// A dropdown of `choices`, grouped, with an [`override_box`] to its right.
+pub(super) fn choice_override(
+    ui: &mut Ui,
+    id_salt: &str,
+    choices: &[Choice],
+    chosen: &mut String,
+    custom: &mut String,
+) {
+    let is_overridden = !custom.trim().is_empty();
+    let current = choices
+        .iter()
+        .find(|choice| choice.value.eq_ignore_ascii_case(chosen));
+    let label = match current {
+        Some(choice) => choice.label,
+        None if chosen.is_empty() => "—",
+        None => chosen.as_str(),
+    };
+
+    let mut text = RichText::new(label);
+    if is_overridden {
+        text = text.strikethrough().weak();
+    }
+
+    let response = ComboBox::from_id_salt(id_salt)
+        .height(450.)
+        .selected_text(text)
+        .show_ui(ui, |ui| {
+            let mut group = None;
+            for choice in choices {
+                if group != Some(choice.group) {
+                    if group.is_some() {
+                        ui.separator();
+                    }
+                    if !choice.group.is_empty() {
+                        ui.strong(choice.group);
+                    }
+                    group = Some(choice.group);
+                }
+
+                let selected = !is_overridden && choice.value.eq_ignore_ascii_case(chosen);
+                let mut response = ui.selectable_label(selected, choice.label);
+                if !choice.help.is_empty() {
+                    response = response.on_hover_text(choice.help);
+                }
+                if response.clicked() {
+                    *chosen = choice.value.to_owned();
+                    custom.clear();
+                }
+            }
+        })
+        .response;
+    if let Some(choice) = current.filter(|choice| !choice.help.is_empty()) {
+        response.on_hover_text(choice.help);
+    }
+
+    override_box(ui, custom);
+}
+
+/// Bring a dropdown and its override in line with `value`, if it was changed elsewhere, e.g. by an
+/// example. A value in the list selects it; any other is put in the override.
+fn sync_override(value: &str, choices: &[Choice], chosen: &mut String, custom: &mut String) {
+    if overridden(chosen, custom) == value {
+        return;
+    }
+
+    if choices
+        .iter()
+        .any(|choice| choice.value.eq_ignore_ascii_case(value))
+    {
+        *chosen = value.to_owned();
+        custom.clear();
+    } else {
+        *custom = value.to_owned();
+    }
+}
+
+/// A Psi4 text field drawn as a dropdown with an override: the method, and the basis set. `None`
+/// for other fields.
+pub(super) fn psi4_choice_field(
+    field: &FormField,
+    label: &str,
+    value: &mut String,
+    ui: &mut Ui,
+) -> Option<egui::Response> {
+    let choices = match field.name.as_str() {
+        "method" => PSI4_METHODS,
+        "basis" => PSI4_BASES,
+        _ => return None,
+    };
+
+    let id = ui.id().with("psi4_override");
+    let (mut chosen, mut custom) = ui
+        .data_mut(|data| data.get_temp::<(String, String)>(id))
+        .unwrap_or_default();
+    sync_override(value, choices, &mut chosen, &mut custom);
+
+    let response = ui
+        .horizontal(|ui| {
+            ui.label(label);
+            choice_override(ui, &field.name, choices, &mut chosen, &mut custom);
+        })
+        .response;
+
+    *value = overridden(&chosen, &custom).to_owned();
+    ui.data_mut(|data| data.insert_temp(id, (chosen, custom)));
+
+    Some(response)
+}
+
+/// Psi4's properties field: the comma-separated names, and a dropdown to add or remove them.
+pub(super) fn psi4_properties_field(
+    label: &str,
+    value: &mut String,
+    ui: &mut Ui,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(TextEdit::singleline(value).desired_width(300.));
+
+        let mut names: Vec<String> = value
+            .split(',')
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .collect();
+        let mut changed = false;
+
+        ComboBox::from_id_salt("psi4_properties")
+            .selected_text("Add / remove")
+            .height(400.)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show_ui(ui, |ui| {
+                for property in PSI4_PROPERTIES {
+                    let present = names
+                        .iter()
+                        .position(|name| name.eq_ignore_ascii_case(property.value));
+                    let mut checked = present.is_some();
+                    if ui
+                        .checkbox(&mut checked, property.label)
+                        .on_hover_text(property.help)
+                        .changed()
+                    {
+                        match present {
+                            Some(i) => {
+                                names.remove(i);
+                            }
+                            None => names.push(property.value.to_owned()),
+                        }
+                        changed = true;
+                    }
+                }
+            });
+
+        if changed {
+            *value = names.join(", ");
+        }
+    })
+    .response
+}
+
+const fn c(
+    value: &'static str,
+    label: &'static str,
+    group: &'static str,
+    help: &'static str,
+) -> Choice {
+    Choice {
+        value,
+        label,
+        group,
+        help,
+    }
+}
+
+#[rustfmt::skip]
+const PSI4_METHODS: &[Choice] = &[
+    c("hf", "HF", "Hartree–Fock", "No electron correlation."),
+    c("hf3c", "HF-3c", "Composite (built-in basis)", "Set the basis to none."),
+    c("pbeh3c", "PBEh-3c", "Composite (built-in basis)", "Set the basis to none."),
+    c("r2scan3c", "r2SCAN-3c", "Composite (built-in basis)", "Set the basis to none."),
+    c("b973c", "B97-3c", "Composite (built-in basis)", "Set the basis to none."),
+    c("blyp", "BLYP", "GGA", ""),
+    c("bp86", "BP86", "GGA", ""),
+    c("pbe", "PBE", "GGA", ""),
+    c("revpbe", "revPBE", "GGA", ""),
+    c("b97-d3bj", "B97-D3(BJ)", "GGA", "Includes D3 dispersion."),
+    c("tpss", "TPSS", "Meta-GGA", ""),
+    c("scan", "SCAN", "Meta-GGA", ""),
+    c("r2scan", "r2SCAN", "Meta-GGA", ""),
+    c("m06-l", "M06-L", "Meta-GGA", ""),
+    c("b97m-v", "B97M-V", "Meta-GGA", "Includes VV10 dispersion."),
+    c("b3lyp", "B3LYP", "Hybrid", ""),
+    c("b3lyp-d3bj", "B3LYP-D3(BJ)", "Hybrid", "Includes D3 dispersion."),
+    c("pbe0", "PBE0", "Hybrid", ""),
+    c("pbe0-d3bj", "PBE0-D3(BJ)", "Hybrid", "Includes D3 dispersion."),
+    c("tpssh", "TPSSh", "Hybrid", ""),
+    c("m06-2x", "M06-2X", "Hybrid", ""),
+    c("pw6b95", "PW6B95", "Hybrid", ""),
+    c("x3lyp", "X3LYP", "Hybrid", ""),
+    c("wb97x", "ωB97X", "Range-separated hybrid", ""),
+    c("wb97x-d", "ωB97X-D", "Range-separated hybrid", "Includes dispersion."),
+    c("wb97x-d3bj", "ωB97X-D3(BJ)", "Range-separated hybrid", "Includes D3 dispersion."),
+    c("wb97x-v", "ωB97X-V", "Range-separated hybrid", "Includes VV10 dispersion."),
+    c("wb97m-v", "ωB97M-V", "Range-separated hybrid", "Includes VV10 dispersion."),
+    c("cam-b3lyp", "CAM-B3LYP", "Range-separated hybrid", ""),
+    c("b2plyp", "B2PLYP", "Double hybrid", ""),
+    c("b2plyp-d3bj", "B2PLYP-D3(BJ)", "Double hybrid", "Includes D3 dispersion."),
+    c("dsd-pbep86", "DSD-PBEP86", "Double hybrid", ""),
+    c("pwpb95", "PWPB95", "Double hybrid", ""),
+    c("mp2", "MP2", "Wavefunction", ""),
+    c("scs-mp2", "SCS-MP2", "Wavefunction", ""),
+    c("mp2.5", "MP2.5", "Wavefunction", ""),
+    c("mp3", "MP3", "Wavefunction", ""),
+    c("omp2", "OMP2", "Wavefunction", "Orbital-optimized MP2."),
+    c("cisd", "CISD", "Wavefunction", ""),
+    c("ccsd", "CCSD", "Wavefunction", "Small molecules only."),
+    c("ccsd(t)", "CCSD(T)", "Wavefunction", "Small molecules only."),
+    c("fno-ccsd(t)", "FNO-CCSD(T)", "Wavefunction", "CCSD(T) with frozen natural orbitals; cheaper."),
+    c("eom-ccsd", "EOM-CCSD", "Wavefunction", "Excited states. Set roots_per_irrep in Additional options."),
+    c("sapt0", "SAPT0", "SAPT (two fragments)", "Interaction energy. Separate the fragments with -- in the geometry."),
+    c("sapt2+", "SAPT2+", "SAPT (two fragments)", "Interaction energy. Separate the fragments with -- in the geometry."),
+];
+
+#[rustfmt::skip]
+const PSI4_BASES: &[Choice] = &[
+    c("", "None", "", "The method includes its basis, e.g. a 3c method."),
+    c("sto-3g", "STO-3G", "Pople", ""),
+    c("3-21g", "3-21G", "Pople", ""),
+    c("6-31g", "6-31G", "Pople", ""),
+    c("6-31g*", "6-31G*", "Pople", ""),
+    c("6-31g**", "6-31G**", "Pople", ""),
+    c("6-31+g*", "6-31+G*", "Pople", ""),
+    c("6-311g**", "6-311G**", "Pople", ""),
+    c("6-311+g(2d,p)", "6-311+G(2d,p)", "Pople", ""),
+    c("6-311++g(2d,2p)", "6-311++G(2d,2p)", "Pople", ""),
+    c("cc-pvdz", "cc-pVDZ", "Dunning", ""),
+    c("cc-pvtz", "cc-pVTZ", "Dunning", ""),
+    c("cc-pvqz", "cc-pVQZ", "Dunning", ""),
+    c("aug-cc-pvdz", "aug-cc-pVDZ", "Dunning", "Diffuse; anions and weak interactions."),
+    c("aug-cc-pvtz", "aug-cc-pVTZ", "Dunning", "Diffuse; anions and weak interactions."),
+    c("aug-cc-pvqz", "aug-cc-pVQZ", "Dunning", "Diffuse; anions and weak interactions."),
+    c("jun-cc-pvdz", "jun-cc-pVDZ", "Dunning", "Partially augmented."),
+    c("jun-cc-pvtz", "jun-cc-pVTZ", "Dunning", "Partially augmented."),
+    c("cc-pcvdz", "cc-pCVDZ", "Dunning", "Core-valence."),
+    c("def2-sv(p)", "def2-SV(P)", "Karlsruhe", ""),
+    c("def2-svp", "def2-SVP", "Karlsruhe", ""),
+    c("def2-svpd", "def2-SVPD", "Karlsruhe", ""),
+    c("def2-tzvp", "def2-TZVP", "Karlsruhe", ""),
+    c("def2-tzvpd", "def2-TZVPD", "Karlsruhe", ""),
+    c("def2-tzvpp", "def2-TZVPP", "Karlsruhe", ""),
+    c("def2-tzvppd", "def2-TZVPPD", "Karlsruhe", ""),
+    c("def2-qzvp", "def2-QZVP", "Karlsruhe", ""),
+    c("def2-qzvpp", "def2-QZVPP", "Karlsruhe", ""),
+    c("pcseg-0", "pcseg-0", "Jensen", ""),
+    c("pcseg-1", "pcseg-1", "Jensen", ""),
+    c("pcseg-2", "pcseg-2", "Jensen", ""),
+    c("aug-pcseg-1", "aug-pcseg-1", "Jensen", ""),
+    c("cc-pv[dt]z", "cc-pV[DT]Z", "Extrapolated", "Two-point extrapolation to the basis set limit."),
+    c("cc-pv[tq]z", "cc-pV[TQ]Z", "Extrapolated", "Two-point extrapolation to the basis set limit."),
+    c("aug-cc-pv[dt]z", "aug-cc-pV[DT]Z", "Extrapolated", "Two-point extrapolation to the basis set limit."),
+    c("aug-cc-pv[tq]z", "aug-cc-pV[TQ]Z", "Extrapolated", "Two-point extrapolation to the basis set limit."),
+];
+
+#[rustfmt::skip]
+const PSI4_PROPERTIES: &[Choice] = &[
+    c("dipole", "Dipole", "", ""),
+    c("quadrupole", "Quadrupole", "", ""),
+    c("mulliken_charges", "Mulliken charges", "", ""),
+    c("lowdin_charges", "Löwdin charges", "", ""),
+    c("mbis_charges", "MBIS charges", "", "Slow; accurate. Suitable for force fields."),
+    c("mbis_volume_ratios", "MBIS volume ratios", "", ""),
+    c("wiberg_lowdin_indices", "Wiberg–Löwdin bond indices", "", ""),
+    c("mayer_indices", "Mayer bond indices", "", ""),
+    c("no_occupations", "Natural orbital occupations", "", ""),
+    c("esp_at_nuclei", "ESP at nuclei", "", ""),
+    c("mo_extents", "MO extents", "", ""),
+    c("grid_esp", "ESP on a grid", "", "Reads grid.dat from the run folder."),
+    c("polarizability", "Polarizability", "", "Coupled-cluster and SCF response."),
+    c("rotation", "Optical rotation", "", "Coupled-cluster response."),
+    c("oscillator_strength", "Oscillator strengths", "", "Coupled-cluster excited states."),
+];
 
 pub(super) fn filter_input_files(config: &mut FileDialogConfig, field: &FormField) {
     let extensions = field.accepted_extensions();

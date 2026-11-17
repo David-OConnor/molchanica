@@ -528,7 +528,7 @@ impl UiVisibility {
             self.nucleic_acids as u8,
             self.amino_acids as u8,
             self.dynamics as u8,
-            self.orca as u8,
+            0, // Reserved; formerly `orca`.
             self.sidebar_mol_properties as u8,
             self.mol_picker_details as u8,
             self.pharmacophore_list as u8,
@@ -545,7 +545,7 @@ impl UiVisibility {
             nucleic_acids: data[4] != 0,
             amino_acids: data[5] != 0,
             dynamics: data[6] != 0,
-            orca: data[7] != 0,
+            // `data[7]` is reserved; formerly `orca`.
             sidebar_mol_properties: data[8] != 0,
             mol_picker_details: data[9] != 0,
             pharmacophore_list: data[10] != 0,

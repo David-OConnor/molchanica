@@ -863,7 +863,7 @@ const PDBE_PREFIX: &str = "pdbe:";
 
 /// Whether a query's text, less any `pdbe:` prefix, is a PDB ID rather than a chemical component ID:
 /// the digit-leading, 4-character legacy form, or the 12-character `pdb_`-prefixed one.
-fn is_pdb_id(inp_l: &str) -> bool {
+pub(crate) fn is_pdb_id(inp_l: &str) -> bool {
     let is_legacy = inp_l.len() == 4
         && inp_l
             .bytes()

@@ -531,7 +531,7 @@ fn field(ui: &mut Ui, mdp: &mut String, key: &str, label: &str) {
     });
 }
 
-fn text_width(ui: &Ui, text: &str, style: TextStyle) -> f32 {
+pub(super) fn text_width(ui: &Ui, text: &str, style: TextStyle) -> f32 {
     let font = FontSelection::Default.resolve_with_fallback(ui.style(), style.into());
 
     ui.painter()

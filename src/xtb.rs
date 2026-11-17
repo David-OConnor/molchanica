@@ -449,9 +449,7 @@ pub fn poll_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates
     }
     state.volatile.md_local.pep_atom_set = result.peptide_atoms;
 
-    for trajectory in &mut state.trajectories {
-        trajectory.ui_active = false;
-    }
+    crate::md::trajectory::set_viewed(&mut state.trajectories, None);
 
     let mut trajectory = Trajectory::new_in_memory(
         snaps.clone(),

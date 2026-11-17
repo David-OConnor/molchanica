@@ -136,7 +136,7 @@ It can also perform quantum molecular dynamics using [ORCA](https://www.faccts.d
 
 ### MD playback
 
-Molchanica can play back molecular dynamics trajectories run from other programs, including GROMACS, OpenMM, and NAMD.
+Molchanica can play back molecular dynamics trajectories run from other programs, including GROMACS, OpenMM, and NAMD. It supports *TRR*, *XTC*, and *DCD* trajectory formats. It uses *GRO* to save molecule sets associated with trajectories. It saves these for runs done in Molchanica, and can load trajectories and molecule sets created elsewhere. It can load and display trajectories for known proteins remotely from [MDposit](https://mdposit.mddbr.eu/).
 
 ![MD playback/viewer, minimal example](/screenshots/md_viewer_march_2026.png)
 

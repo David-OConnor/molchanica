@@ -49,7 +49,6 @@ use crate::{
     mol_editor::MolEditorState,
     mol_manip::MolManip,
     nucleic_acid_creation::ResidueGrouping,
-    orca::StateOrca,
     peptide_creation::PeptideGeometry,
     peptide_ligands::LigAttachUi,
     prefs::{DepthMode, OpenType, ToSave},
@@ -93,7 +92,6 @@ pub struct State {
     pub mol_specific_params: HashMap<String, ForceFieldParams>,
     pub templates: Templates,
     pub mol_editor: MolEditorState,
-    pub orca: StateOrca,
     /// For pharmacophore-based screening
     /// todo: Pharmacophore state
     pub pharmacophore: PharmacophoreState,
@@ -149,7 +147,6 @@ impl Default for State {
             mol_specific_params: Default::default(),
             templates: Default::default(),
             mol_editor: Default::default(),
-            orca: Default::default(),
             pharmacophore: Default::default(),
             // The defaults live in `prefs::Graphics`; `load_prefs` then replaces this wholesale
             // with whatever the user last saved.
@@ -560,6 +557,7 @@ pub struct StateVolatile {
     /// Saved on entering the mol editor, and restored on exiting it.
     pub primary_mode_cam: Option<PrimaryModeCam>,
     pub md_local: MdStateLocal,
+    pub mdposit: crate::md::mdposit::Import,
     pub orbit_center: Option<(MolType, usize)>,
     pub alignment: StateAlignment,
     #[cfg(feature = "adme")]
@@ -706,6 +704,8 @@ pub struct StateUi {
     pub mouse_in_window: bool,
     /// For the arc/orbit cam only.
     pub orbit_selected_atom: bool,
+    /// `Some` if shown.
+    pub floor: Option<crate::drawing::floor::Floor>,
     /// A flag so we know to update the flashlight upon loading a new model; this should be done within
     /// a callback.
     pub show_docking_tools: bool,
@@ -1283,7 +1283,6 @@ pub struct UiVisibility {
     pub nucleic_acids: bool,
     pub amino_acids: bool,
     pub dynamics: bool,
-    pub orca: bool,
     pub sidebar_mol_properties: bool,
     pub mol_picker_details: bool,
     pub pharmacophore_list: bool,
@@ -1301,7 +1300,6 @@ impl Default for UiVisibility {
             nucleic_acids: false,
             amino_acids: false,
             dynamics: false,
-            orca: false,
             mol_picker_details: true,
             sidebar_mol_properties: true,
             pharmacophore_list: false,

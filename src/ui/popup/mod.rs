@@ -285,7 +285,7 @@ pub(in crate::ui) fn load_popups(
 
     if state.ui.popup.md_mol_set_editor {
         let open = show_popup(popup("MD molecule set editor"), ui.ctx(), |ui| {
-            md_viewer::md_mol_set_editor(state, ui);
+            md_viewer::md_mol_set_editor(state, scene, updates, ui, redraw);
         });
         state.ui.popup.md_mol_set_editor &= open;
     }
@@ -325,7 +325,7 @@ pub(in crate::ui) fn load_popups(
                 .default_width(760.0)
                 .default_height(700.0),
             ui.ctx(),
-            |ui| quantum_chem::window(state, scene, updates, ui),
+            |ui| quantum_chem::window(state, scene, updates, redraw, ui),
         );
         state.ui.popup.quantum_chem &= open;
     }

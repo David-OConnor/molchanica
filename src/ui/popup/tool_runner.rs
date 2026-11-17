@@ -28,7 +28,10 @@ use serde_json::{Map, Value, json};
 use super::{
     external_tools::tool_links,
     flex_lists::{self, PageLists},
-    quantum_chem,
+    quantum_chem::{
+        self, Psi4Preview, QcRequest,
+        orca::{ActiveMol, OrcaForm},
+    },
 };
 use crate::{
     compute_caps,
@@ -40,9 +43,10 @@ use crate::{
         tool_form::{FieldKind, FormContract, FormField, Preset},
     },
     file_io::sequence::{load_sequences, seq_exts_open},
+    orca::OrcaJob,
     state::{ComputationGuard, ComputationType, Computations, State},
     ui::{
-        COL_SPACING, COLOR_ACTION, COLOR_HIGHLIGHT, ROW_SPACING,
+        COL_SPACING, COLOR_ACTION, COLOR_AMBER, COLOR_HIGHLIGHT, ROW_SPACING,
         misc::{selector_box, selector_option},
         util::open_dir,
     },
@@ -176,7 +180,7 @@ impl ToolWindowKind {
             ],
             Self::SequenceDesign => &[Tool::ProteinMpnn, Tool::LigandMpnn],
             Self::BackboneDesign => &[Tool::RfDiffusion3],
-            Self::QuantumChemistry => &[Tool::Psi4],
+            Self::QuantumChemistry => &[Tool::Psi4, Tool::Orca],
         }
     }
 }
@@ -205,6 +209,10 @@ impl ToolWindows {
     /// next time it's drawn.
     pub(crate) fn load_structure_pred_seq(&mut self, sequence: Sequence, job_name: String) {
         self.structure_prediction.pending_sequence = Some((sequence, job_name));
+    }
+
+    pub(super) fn quantum_chem(&mut self) -> &mut ToolWindow {
+        &mut self.quantum_chem
     }
 }
 
@@ -909,6 +917,7 @@ fn rfd3_parameters(
 
 enum FileAction {
     Input(Tool, String),
+    OrcaInput,
     Export(PathBuf),
     LoadRun(Tool),
 }
@@ -972,6 +981,14 @@ pub(crate) struct ToolWindow {
     boltz_outputs: HashMap<PathBuf, Vec<(String, Result<Value, String>)>>,
     /// Height of the controls under the form, as of last frame.
     footer_height: f32,
+    /// The ORCA backend's form, for the quantum chemistry window.
+    pub(super) orca: OrcaForm,
+    /// For the quantum chemistry window, which sets it each frame.
+    pub(super) active_mol: Option<ActiveMol>,
+    /// Work for the quantum chemistry window, which has the rest of the program's state.
+    request: Option<QcRequest>,
+    /// The input Psi4's "Set parameters here" makes, shown above it.
+    psi4_preview: Psi4Preview,
 }
 
 impl ToolWindow {
@@ -1007,7 +1024,66 @@ impl ToolWindow {
             results_heading: None,
             boltz_outputs: HashMap::new(),
             footer_height: 0.,
+            orca: OrcaForm::default(),
+            active_mol: None,
+            request: None,
+            psi4_preview: Psi4Preview::default(),
         }
+    }
+
+    pub(super) fn tool(&self) -> Tool {
+        self.tool
+    }
+
+    pub(super) fn set_tool(&mut self, tool: Tool) {
+        self.tool = tool;
+    }
+
+    pub(super) fn take_request(&mut self) -> Option<QcRequest> {
+        self.request.take()
+    }
+
+    pub(super) fn set_error(&mut self, error: String) {
+        self.message = None;
+        self.error = Some(error);
+    }
+
+    /// Replace the Psi4 geometry, e.g. with the active molecule's.
+    pub(super) fn set_psi4_geometry(&mut self, coordinates: String, name: &str) {
+        let Some(form) = self.forms.get_mut(&Tool::Psi4) else {
+            return;
+        };
+
+        // Psi4 uses the name as an identifier.
+        let mut name: String = name
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .take(60)
+            .collect();
+        if name.starts_with(|c: char| c.is_ascii_digit()) {
+            name.insert(0, 'm');
+        }
+
+        form.values.insert("coordinates".into(), coordinates);
+        form.values.insert("molecule_name".into(), name);
+        form.authoritative_mode = form.mode.clone();
+        form.projection_error = None;
+        self.error = None;
+    }
+
+    /// Start an ORCA run, whose result joins this window's results.
+    pub(super) fn start_orca(&mut self, ui: &Ui, computations: &Computations, job: OrcaJob) {
+        let computation = computations.start(
+            ComputationType::QuantumMechanics,
+            Tool::Orca.spec().name(),
+            Some(job.activity.clone()),
+        );
+        let control = RunControl::default();
+
+        self.control = Some(control.clone());
+        self.start_job(ui, JobAction::Run, computation, move || {
+            JobResult::Run(crate::orca::run(job, &control).map_err(|error| error.to_string()))
+        });
     }
 
     pub(crate) fn poll(&mut self) {
@@ -1030,7 +1106,7 @@ impl ToolWindow {
 
         match result {
             JobResult::Run(Ok(result)) => {
-                let first = primary_file(self.tool, &result).cloned();
+                let first = primary_file(self.tool, &result);
                 let message = if remote_results_url(&result).is_some() {
                     "Downloaded from athanortools.com. All raw results are retained on disk."
                 } else {
@@ -1211,28 +1287,32 @@ impl ToolWindow {
 
         let busy = self.receiver.is_some();
 
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(!busy, |ui| {
-                if kind == ToolWindowKind::QuantumChemistry {
-                    ui.label("Backend");
-                }
-                ComboBox::from_id_salt("scientific_tool")
-                    .selected_text(self.tool.spec().name())
-                    .show_ui(ui, |ui| {
-                        for tool in tools {
-                            ui.selectable_value(&mut self.tool, *tool, tool.spec().name());
-                        }
-                    });
+        // The quantum chemistry window draws its backend picker beside its compute selector.
+        if kind != ToolWindowKind::QuantumChemistry {
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    ComboBox::from_id_salt("scientific_tool")
+                        .selected_text(self.tool.spec().name())
+                        .show_ui(ui, |ui| {
+                            for tool in tools {
+                                ui.selectable_value(&mut self.tool, *tool, tool.spec().name());
+                            }
+                        });
+                });
+
+                ui.add_space(COL_SPACING);
+                tool_links(self.tool, ui);
             });
 
-            ui.add_space(COL_SPACING);
-            tool_links(self.tool, ui);
-        });
-
-        let spec = self.tool.spec();
-        if self.tool != Tool::Psi4 {
             compute_guidance(self.tool, compute.target, compute.adapter, ui);
         }
+
+        if self.tool == Tool::Orca {
+            self.draw_orca(remote, ui);
+            return None;
+        }
+
+        let spec = self.tool.spec();
 
         if let Entry::Vacant(entry) = self.forms.entry(self.tool) {
             match Form::new(self.tool) {
@@ -1271,6 +1351,7 @@ impl ToolWindow {
         let mut pick_sequence = None;
         let mut use_sequence = None;
         let mut use_protein = None;
+        let mut use_active_mol = false;
         let mut project_input = false;
         let form = self.forms.get_mut(&self.tool).unwrap();
 
@@ -1309,6 +1390,26 @@ impl ToolWindow {
                 form.opened_protein = Some(index);
             }
 
+            if self.tool == Tool::Psi4 && form.mode == "parameters" {
+                let mut values = form.contract.defaults();
+                for field in &form.contract.fields {
+                    if field.applies_to("parameters")
+                        && let Some(value) = form.values.get(&field.name)
+                    {
+                        values.insert(field.name.clone(), value.clone());
+                    }
+                }
+                self.psi4_preview.update(values, ui.ctx());
+
+                let height = (ui.available_height() * 0.3).clamp(60., 280.);
+                quantum_chem::input_preview_ui(
+                    &self.psi4_preview.preview,
+                    "psi4_input_preview",
+                    height,
+                    ui,
+                );
+            }
+
             fields_ui(
                 self.tool,
                 kind,
@@ -1318,10 +1419,15 @@ impl ToolWindow {
                 &mut pick,
                 &mut pick_sequence,
                 &mut use_sequence,
+                &mut use_active_mol,
                 self.footer_height,
                 ui,
             );
         });
+
+        if use_active_mol {
+            self.request = Some(QcRequest::Psi4Geometry);
+        }
 
         if let Some((target, index)) = use_sequence
             && let Some(sequence) = sequences.get(index)
@@ -1474,6 +1580,87 @@ impl ToolWindow {
             }
         }
 
+        self.footer_end(footer, busy, ui);
+
+        None
+    }
+
+    /// The ORCA backend's form and controls.
+    fn draw_orca(&mut self, remote: bool, ui: &mut Ui) {
+        let busy = self.busy();
+        self.progress_ui(ui);
+
+        let mut event = Default::default();
+        ui.add_enabled_ui(!busy, |ui| {
+            event = quantum_chem::orca::form_ui(
+                &mut self.orca,
+                self.active_mol.as_ref(),
+                self.footer_height,
+                ui,
+            );
+        });
+        let quantum_chem::orca::FormEvent {
+            pick_file,
+            make_text,
+        } = event;
+
+        if pick_file {
+            quantum_chem::orca::filter_input_files(self.dialog.config_mut());
+            self.file_action = Some(FileAction::OrcaInput);
+            self.dialog.pick_file();
+        }
+        if make_text {
+            self.request = Some(QcRequest::OrcaText);
+        }
+
+        // See `draw`.
+        let mut footer = ui.new_child(UiBuilder::new().max_rect(ui.available_rect_before_wrap()));
+        let installed = external_tools::is_installed(Tool::Orca);
+        let not_ready = self.orca.not_ready(self.active_mol.as_ref());
+
+        footer.horizontal(|ui| {
+            let blocker = if remote {
+                Some("ORCA isn't available remotely. Set Compute to Local.")
+            } else if !installed {
+                Some("ORCA isn't installed, or isn't on the PATH.")
+            } else {
+                not_ready
+            };
+
+            let run = ui
+                .add_enabled(
+                    !busy && blocker.is_none(),
+                    Button::new(RichText::new("Run").color(COLOR_ACTION)),
+                )
+                .on_hover_text("Run ORCA. Its files are kept, and listed when it finishes.")
+                .on_disabled_hover_text(blocker.unwrap_or("Running…"))
+                .clicked();
+            if run {
+                self.request = Some(QcRequest::OrcaRun);
+            }
+
+            if remote {
+                ui.label(RichText::new("Local only").small().color(COLOR_AMBER));
+            } else {
+                ui.label(RichText::new("Runs locally on the CPU.").small());
+            }
+
+            if ui
+                .add_enabled(!busy, Button::new("Open saved run…"))
+                .on_hover_text("Choose result.json from a saved run folder.")
+                .clicked()
+            {
+                self.file_action = Some(FileAction::LoadRun(Tool::Orca));
+                self.dialog.config_mut().default_file_filter = None;
+                self.dialog.pick_file();
+            }
+        });
+
+        self.footer_end(footer, busy, ui);
+    }
+
+    /// The status, a link to past results, and reserving the footer's space in `ui`.
+    fn footer_end(&mut self, mut footer: Ui, busy: bool, ui: &mut Ui) {
         self.status_ui(&mut footer);
 
         if !self.results.is_empty() && !busy {
@@ -1497,8 +1684,6 @@ impl ToolWindow {
             self.footer_height = footer_height;
             ui.ctx().request_repaint();
         }
-
-        None
     }
 
     /// The error and status message, if any.
@@ -1563,6 +1748,7 @@ impl ToolWindow {
                     form.values.insert(field, path.display().to_string());
                 }
             }
+            Some(FileAction::OrcaInput) => self.orca.input_file = path.display().to_string(),
             Some(FileAction::Export(source)) => match fs::copy(&source, &path) {
                 Ok(_) => self.message = Some(format!("Saved {}", path.display())),
                 Err(error) => self.error = Some(error.to_string()),
@@ -1573,12 +1759,9 @@ impl ToolWindow {
                         let saved_slug = result.details.get("tool_slug").and_then(Value::as_str);
                         let tool = Tool::ALL
                             .into_iter()
-                            .find(|candidate| {
-                                saved_slug.is_some()
-                                    && candidate.spec().adapter_slug() == saved_slug
-                            })
+                            .find(|candidate| Some(candidate.spec().catalog_slug) == saved_slug)
                             .unwrap_or(tool);
-                        self.selected_file = primary_file(tool, &result).cloned();
+                        self.selected_file = primary_file(tool, &result);
                         self.preview = self.selected_file.as_ref().map(|path| preview_text(path));
                         self.selected_result = self.results.len();
                         self.results.push((tool, result));
@@ -1694,13 +1877,18 @@ impl ToolWindow {
             });
         if previous != self.selected_result {
             let (tool, result) = &self.results[self.selected_result];
-            self.selected_file = primary_file(*tool, result).cloned();
+            self.selected_file = primary_file(*tool, result);
             self.preview = self.selected_file.as_ref().map(|path| preview_text(path));
         }
 
         let (tool, result) = &self.results[self.selected_result];
         if *tool == Tool::Psi4 {
             quantum_chem::summary_ui(&result.details, lists, ui);
+        }
+        if *tool == Tool::Orca
+            && let Some(apply) = quantum_chem::orca::summary_ui(&result.details, lists, ui)
+        {
+            self.request = Some(QcRequest::Apply(apply));
         }
         if *tool == Tool::Boltz2 {
             let outputs = self
@@ -1770,7 +1958,7 @@ impl ToolWindow {
             {
                 export = Some(path.clone());
             }
-            if ui.button("Save raw results (.zip)…").clicked() {
+            if result.archive.is_file() && ui.button("Save raw results (.zip)…").clicked() {
                 export = Some(result.archive.clone());
             }
             if ui.button("Open run folder").clicked()
@@ -2008,6 +2196,15 @@ fn output_label(tool: Tool, result: &AdapterResult, path: &Path) -> String {
     {
         return label.into();
     }
+    if tool == Tool::Orca {
+        return match quantum_chem::orca::output_name(path) {
+            Some(label) => label.into(),
+            None => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into(),
+            ),
+        };
+    }
 
     let log_root = result
         .details
@@ -2038,14 +2235,18 @@ fn output_category(path: &Path) -> Option<DataCategory> {
     .find(|kind| kind.suffixes().iter().any(|suffix| name.ends_with(suffix)))
 }
 
-fn primary_file(tool: Tool, result: &AdapterResult) -> Option<&PathBuf> {
+fn primary_file(tool: Tool, result: &AdapterResult) -> Option<PathBuf> {
+    if tool == Tool::Orca {
+        return quantum_chem::orca::primary_file(&result.details, &result.files);
+    }
+
     if tool == Tool::Psi4
         && let Some(geometry) = result
             .files
             .iter()
             .find(|path| quantum_chem::is_final_geometry(path))
     {
-        return Some(geometry);
+        return Some(geometry.clone());
     }
 
     let category = tool
@@ -2058,6 +2259,7 @@ fn primary_file(tool: Tool, result: &AdapterResult) -> Option<&PathBuf> {
         .iter()
         .find(|path| category.is_some() && output_category(path) == category)
         .or_else(|| result.files.first())
+        .cloned()
 }
 
 fn structure_for_loading(path: &Path, directory: &Path) -> io::Result<PathBuf> {
@@ -2288,6 +2490,7 @@ fn fields_ui(
     pick: &mut Option<String>,
     pick_sequence: &mut Option<SequenceTarget>,
     use_sequence: &mut Option<(SequenceTarget, usize)>,
+    use_active_mol: &mut bool,
     footer_height: f32,
     ui: &mut Ui,
 ) {
@@ -2342,6 +2545,7 @@ fn fields_ui(
                                     pick,
                                     pick_sequence,
                                     use_sequence,
+                                    use_active_mol,
                                     ui,
                                 );
                             });
@@ -2385,6 +2589,7 @@ fn draw_field(
     pick: &mut Option<String>,
     pick_sequence: &mut Option<SequenceTarget>,
     use_sequence: &mut Option<(SequenceTarget, usize)>,
+    use_active_mol: &mut bool,
     ui: &mut Ui,
 ) {
     if field.managed_by_runner {
@@ -2393,6 +2598,16 @@ fn draw_field(
     }
     let value = values.entry(field.name.clone()).or_default();
     let label = format!("{}{}", field.label, if field.required { " *" } else { "" });
+
+    let psi4_widget = match field.name.as_str() {
+        _ if tool != Tool::Psi4 => None,
+        "properties" => Some(quantum_chem::psi4_properties_field(&label, value, ui)),
+        _ => quantum_chem::psi4_choice_field(field, &label, value, ui),
+    };
+    if let Some(response) = psi4_widget {
+        response.on_hover_text(format!("{}\n{}", field.help, field.help_note));
+        return;
+    }
 
     let response = match field.kind() {
         FieldKind::Checkbox => {
@@ -2424,7 +2639,20 @@ fn draw_field(
             .response
         }
         FieldKind::TextArea => {
-            ui.label(&label);
+            if tool == Tool::Psi4 && field.name == "coordinates" {
+                ui.horizontal(|ui| {
+                    ui.label(&label);
+                    if ui
+                        .button("Use active molecule")
+                        .on_hover_text("Replace the geometry with the active molecule's atoms.")
+                        .clicked()
+                    {
+                        *use_active_mol = true;
+                    }
+                });
+            } else {
+                ui.label(&label);
+            }
             if window_kind == ToolWindowKind::StructurePrediction {
                 match document_sequence_targets(tool, &field.name, value) {
                     Ok(targets) => {

@@ -392,12 +392,6 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
 
     let tooltip = "Show or hide the AA selection section of the UI";
     vis_helper(&mut state.ui.ui_vis.aa_selection, "AA Sel", tooltip, ui);
-
-    // todo: Do we want this button available if ORCA is not on the PATH? Maybe check at runtime,
-    // todo or check when clicking this button. Not sure yet.
-    let tooltip =
-        "Show or hide the ORCA (Quantum mechanics package) section. Has powerful, but slow tools";
-    vis_helper(&mut state.ui.ui_vis.orca, "ORCA", tooltip, ui);
 }
 
 pub fn mesh_coloring_selector(coloring: &mut MeshColoring, update_flag: &mut bool, ui: &mut Ui) {

@@ -1,8 +1,6 @@
 //! For loading trajectories from file, and loading frames to memory as required.
 
-// todo: Consider moving this to a new module with md.rs
-
-// todo: Eval if this should move to bio_files or dynamics. If it doesn't use
+// todo: Eval if this should move to bio_files. If it doesn't use
 // todo any code from Molchanica, the answer is yes.
 
 use std::{
@@ -14,10 +12,8 @@ use std::{
 use bio_files::{
     AtomGeneric, FrameSlice,
     dcd::{DcdMetadata, read_dcd},
-    gromacs::{
-        OutputEnergy,
-        trr::{TrrMetadata, read_trr},
-    },
+    gromacs::OutputEnergy,
+    trr::{TrrMetadata, read_trr},
     xtb::XtbFrame,
     xtc::{XtcMetadata, read_xtc},
 };
@@ -276,7 +272,7 @@ pub struct Trajectory {
     pub num_frames: usize,          // in DCD header.
     pub start_step: f32,            // In DCD header. Each TRR and XTC frame.
     pub save_interval_steps: usize, // DCD header? todo
-    pub dt: f32,                    // In DCD. ps?
+    pub dt: f32,                    // ps between frames.
     pub end_time: f32,              // Not in the file directly; we calculate this.
     /// Estimated memory per loaded frame, in bytes.
     pub frame_bytes: usize,
@@ -341,6 +337,11 @@ impl Trajectory {
                 result.save_interval_steps = md.save_interval_steps;
                 result.dt = md.dt;
                 result.end_time = md.end_time;
+
+                // Velocities and forces load too, if present.
+                let vecs = 1 + usize::from(md.has_velocities) + usize::from(md.has_forces);
+                result.frame_bytes =
+                    size_of::<Snapshot>() + md.num_atoms * vecs * size_of::<Vec3>();
             }
             TrajFormat::Dcd => {
                 let md = DcdMetadata::read(path)?;
@@ -351,6 +352,7 @@ impl Trajectory {
                 result.save_interval_steps = md.save_interval_steps;
                 result.dt = md.dt;
                 result.end_time = md.end_time;
+                result.frame_bytes = posits_frame_bytes(md.num_atoms);
             }
             TrajFormat::Xtc => {
                 let md = XtcMetadata::read(path)?;
@@ -360,26 +362,10 @@ impl Trajectory {
                 result.start_step = md.start_time;
                 result.dt = md.dt;
                 result.end_time = md.end_time;
+                result.frame_bytes = posits_frame_bytes(md.num_atoms);
             }
             TrajFormat::InMemory => unreachable!(),
         }
-
-        result.frame_bytes = match format {
-            // Velocities and forces may be present; measure the first frame.
-            TrajFormat::Trr => read_trr(
-                path,
-                FrameSlice::Index {
-                    start: None,
-                    end: Some(0),
-                    step: 1,
-                },
-            )
-            .ok()
-            .and_then(|frames| frames.into_iter().next())
-            .map(|frame| snapshot_bytes(&Snapshot::from(frame)))
-            .unwrap_or_else(|| posits_frame_bytes(result.num_atoms)),
-            _ => posits_frame_bytes(result.num_atoms),
-        };
 
         result.ui_end_i = result.num_frames.saturating_sub(1);
 
@@ -442,6 +428,20 @@ impl Trajectory {
             ui_start_time: String::new(),
             ui_end_time: String::new(),
             ui_active: false,
+        }
+    }
+
+    /// False if the file has no frame times, e.g. a DCD with DELTA = 0, or an XTC with all times 0.
+    /// MDposit trajectories are like this.
+    pub fn has_times(&self) -> bool {
+        self.num_frames < 2 || self.dt != 0.
+    }
+
+    /// The file frame index of loaded frame `i`.
+    pub fn frame_index(&self, i: usize) -> usize {
+        match self.frames_open {
+            Some(FrameSlice::Index { start, step, .. }) => start.unwrap_or(0) + i * step.max(1),
+            _ => i,
         }
     }
 
@@ -552,6 +552,18 @@ impl Trajectory {
         self.ui_active = true;
 
         Ok(snaps)
+    }
+}
+
+/// Marks trajectory `i` as the one whose frames the viewer holds. The viewer holds one trajectory's
+/// frames at a time, so loading one frees the others'.
+pub fn set_viewed(trajectories: &mut [Trajectory], i: Option<usize>) {
+    for (j, traj) in trajectories.iter_mut().enumerate() {
+        traj.ui_active = Some(j) == i;
+
+        if !traj.ui_active {
+            traj.frames_open = None;
+        }
     }
 }
 

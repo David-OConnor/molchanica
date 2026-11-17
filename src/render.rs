@@ -3,8 +3,8 @@
 use std::f32::consts::TAU;
 
 use graphics::{
-    Camera, DeviceType, EngineUpdates, Handedness, InputSettings, Lighting, Mesh, PointLight,
-    Scene, ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings,
+    Camera, DeviceEvent, DeviceType, EngineUpdates, Handedness, InputSettings, Lighting, Mesh,
+    PointLight, Scene, ScrollBehavior, UiLayoutSides, UiLayoutTopBottom, UiSettings, WindowEvent,
 };
 use lin_alg::f32::Vec3;
 
@@ -13,7 +13,7 @@ use crate::{
         FOG_HALF_DEPTH_DEFAULT, RENDER_DIST_FAR, RENDER_DIST_NEAR, VIEW_DEPTH_DEFAULT,
         calc_fog_dists, front_orientation,
     },
-    drawing::atoms_bonds::BOND_RADIUS_BASE,
+    drawing::{atoms_bonds::BOND_RADIUS_BASE, floor},
     inputs,
     inputs::{RUN_FACTOR, SCROLL_MOVE_AMT, SCROLL_ROTATE_AMT},
     state::{MsaaSetting, State},
@@ -41,9 +41,13 @@ pub const MESH_PEP_SOLVENT_SURFACE: usize = 6; // Van Der Waals surface.
 pub const MESH_DENSITY_SURFACE: usize = 8;
 pub const MESH_SECONDARY_STRUCTURE: usize = 9; // Active peptide ribbon.
 pub const MESH_OTHER_RIBBONS: usize = 10; // Combined ribbons for other open peptides.
+// Keep these in this order, so the axes draw over the floor.
+pub const MESH_FLOOR: usize = 11;
+pub const MESH_FLOOR_AXIS_X: usize = 12;
+pub const MESH_FLOOR_AXIS_Z: usize = 13;
 
 // We support an arbitrary number of pockets.
-pub const MESH_POCKET_START: usize = 11;
+pub const MESH_POCKET_START: usize = 14;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 
@@ -139,6 +143,32 @@ fn render_handler(state: &mut State, scene: &mut Scene, _dt: f32) -> EngineUpdat
     updates
 }
 
+// Input handlers can rebuild all entities, e.g. in the mol editor; restore the floor after them.
+fn event_dev_handler(
+    state: &mut State,
+    event: DeviceEvent,
+    scene: &mut Scene,
+    engine_inputs: bool,
+    dt: f32,
+) -> EngineUpdates {
+    let mut updates = inputs::event_dev_handler(state, event, scene, engine_inputs, dt);
+    floor::update(state, scene, &mut updates);
+
+    updates
+}
+
+fn event_win_handler(
+    state: &mut State,
+    event: WindowEvent,
+    scene: &mut Scene,
+    dt: f32,
+) -> EngineUpdates {
+    let mut updates = inputs::event_win_handler(state, event, scene, dt);
+    floor::update(state, scene, &mut updates);
+
+    updates
+}
+
 /// Run by `Graphics` once, when the event loop exits. Persist prefs on close, so changes made
 /// since the last action-triggered or timed save (e.g. selection, visibility, molecule positions)
 /// still stick.
@@ -188,9 +218,11 @@ pub fn render(state: State) {
             Mesh::new_box(1., 1., 1.), // Placeholder for density surface; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for secondary structure surface; populated later.
             Mesh::default(),           // Ribbons for other open peptides.
-
-                                       // No placeholder for pockets; we add them as required.
-                                       // Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
+            floor::mesh_disc(),
+            floor::mesh_axis(true),
+            floor::mesh_axis(false),
+            // No placeholder for pockets; we add them as required.
+            // Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
         ],
         entities: Vec::new(),
         gaussians: Vec::new(),
@@ -276,8 +308,8 @@ pub fn render(state: State) {
         ui_settings,
         graphics_settings,
         render_handler,
-        inputs::event_dev_handler,
-        inputs::event_win_handler,
+        event_dev_handler,
+        event_win_handler,
         ui_handler,
         exit_handler,
     );

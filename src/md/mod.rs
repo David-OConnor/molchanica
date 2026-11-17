@@ -38,6 +38,7 @@ use crate::{
     xtb,
 };
 
+pub mod mdposit;
 pub mod runs;
 pub mod trajectory;
 pub mod viewer;
@@ -901,10 +902,7 @@ impl State {
         md.mol_dynamics = None;
         self.trajectories
             .retain(|traj| matches!(traj.source, trajectory::TrajectorySource::File(_)));
-        for traj in &mut self.trajectories {
-            traj.frames_open = None;
-            traj.ui_active = false;
-        }
+        trajectory::set_viewed(&mut self.trajectories, None);
         updates.entities = graphics::EntityUpdate::All;
     }
 }
@@ -1631,7 +1629,7 @@ pub fn start_md(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdate
             gromacs::launch_md(state)
         }
         MdBackend::xTb => xtb::launch_md(state),
-        // todo: For now, we launch ORCA MD from the ORCA UI.
+        // todo: For now, we launch ORCA MD from the quantum chemistry window.
         MdBackend::Orca => {}
     }
 }

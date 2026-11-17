@@ -12,6 +12,5 @@ pub mod md_viewer;
 mod md_xtb;
 pub mod mol_data;
 pub(super) mod na_creation;
-pub mod orca;
 mod sequence_input;
 pub mod view;

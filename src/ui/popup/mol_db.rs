@@ -95,9 +95,9 @@ pub(in crate::ui) fn parquet_db(
 
         if button!(
         ui,
-        "Load DB",
+        "Open DB",
         COLOR_ACTION,
-        "Load a Parquet molecule database. Can use this for screening, or add more molecules to it."
+        "Open a Parquet molecule database from disk. Can use this for screening, or add more molecules to it."
     )
             .clicked()
         {

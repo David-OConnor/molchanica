@@ -178,6 +178,18 @@ pub fn run_tool(
     workflow: &str,
     control: Option<&RunControl>,
 ) -> io::Result<()> {
+    run_tool_logged(command, tool, workflow, control, None)
+}
+
+/// [`run_tool`], also writing the tool's whole stdout to `stdout_log`. For tools that report
+/// results on stdout, e.g. ORCA.
+pub fn run_tool_logged(
+    command: &mut Command,
+    tool: Tool,
+    workflow: &str,
+    control: Option<&RunControl>,
+    stdout_log: Option<&Path>,
+) -> io::Result<()> {
     let name = tool.spec().name();
     if let Some(control) = control {
         control.check_cancelled(tool)?;
@@ -213,7 +225,10 @@ pub fn run_tool(
         spawn_output_reader(stdout, Stream::Stdout, output_tx.clone()),
         spawn_output_reader(stderr, Stream::Stderr, output_tx),
     ];
-    let mut captured = Captured::default();
+    let mut captured = Captured {
+        log: stdout_log.map(fs::File::create).transpose()?,
+        ..Default::default()
+    };
 
     let status = loop {
         while let Ok(chunk) = output_rx.try_recv() {
@@ -269,16 +284,21 @@ struct Chunk {
     bytes: Vec<u8>,
 }
 
-/// The head of each stream, kept for the error message.
+/// The head of each stream, kept for the error message, and optionally all of stdout.
 #[derive(Default)]
 struct Captured {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    log: Option<fs::File>,
 }
 
 impl Captured {
     /// Forward a chunk to Molchanica's corresponding stream, and keep it if there is room.
     fn forward(&mut self, chunk: &Chunk) {
+        if let (Stream::Stdout, Some(log)) = (chunk.stream, &mut self.log) {
+            let _ = log.write_all(&chunk.bytes);
+        }
+
         let (output, captured): (&mut dyn Write, &mut Vec<u8>) = match chunk.stream {
             Stream::Stdout => (&mut io::stdout(), &mut self.stdout),
             Stream::Stderr => (&mut io::stderr(), &mut self.stderr),

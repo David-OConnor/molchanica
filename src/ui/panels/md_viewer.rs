@@ -1,5 +1,5 @@
 use dynamics::snapshot::Snapshot;
-use egui::{Color32, RichText, ScrollArea, Slider, TextEdit, Ui};
+use egui::{Color32, RichText, ScrollArea, Slider, TextEdit, TextStyle, Ui};
 use graphics::{EngineUpdates, EntityUpdate, Scene};
 use mol_defs::molecules::{Atom, MolType, common::MoleculeCommon};
 use na_seq::Element;
@@ -8,13 +8,14 @@ use crate::{
     button,
     cam::{VIEW_DIR_FRONT, move_cam_to_mol_front, reset_camera},
     label,
-    md::{viewer, viewer::ViewerMolecule},
+    md::{trajectory::set_viewed, viewer, viewer::ViewerMolecule},
     state::State,
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_REMOVE, ROW_SPACING,
         highlighted_box,
         misc::{selector_box, selector_option},
         num_field,
+        panels::md_gromacs::text_width,
     },
     util::{RedrawFlags, handle_err, handle_success},
 };
@@ -65,20 +66,82 @@ fn cam_target_mol(state: &State) -> Option<(MolType, usize)> {
         .map(|(id, _)| *id)
 }
 
-pub(in crate::ui) fn dynamics_viewer(
+fn clear_traj_btn(
     state: &mut State,
     scene: &mut Scene,
     updates: &mut EngineUpdates,
     redraw: &mut RedrawFlags,
     ui: &mut Ui,
 ) {
+    if state.volatile.md_local.viewer.snapshots.is_empty()
+        || !ui
+            .button(RichText::new("Clear Traj"))
+            .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
+            .clicked()
+    {
+        return;
+    }
+
+    state.clear_md_frames(scene, redraw, updates);
+
+    if let Some(molecule) = cam_target_mol(state) {
+        move_cam_to_mol_front(state, scene, molecule, updates);
+    }
+}
+
+/// Why MD playback isn't available, e.g. no frames, or an atom count mismatch. For the MD panel.
+pub(in crate::ui) fn playback_status(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+    ui: &mut Ui,
+) {
+    if state.volatile.md_local.viewer.mols_and_traj_synced() {
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        clear_traj_btn(state, scene, updates, redraw, ui);
+
+        let viewer = &state.volatile.md_local.viewer;
+        let txt = if viewer.snapshots.is_empty() {
+            "Not ready for MD playback; no snapshots/frames loaded.".to_owned()
+        } else {
+            let mut t = "Not ready for MD playback; trajectory and mol set atom count mismatch: "
+                .to_owned();
+
+            if let Some(set) = viewer.get_active_mol_set() {
+                t.push_str(&format!(
+                    "Traj: {} Mol set: {}",
+                    viewer.snapshots[0].atom_posits.len(),
+                    set.atom_count
+                ));
+            }
+            t
+        };
+
+        label!(ui, txt, Color32::GRAY);
+    });
+}
+
+/// MD playback controls. Shown whenever loaded frames pair with the active mol set, independent
+/// of the MD panel.
+pub(in crate::ui) fn playback(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+    ui: &mut Ui,
+) {
+    if !state.volatile.md_local.viewer.mols_and_traj_synced() {
+        return;
+    }
+
     // --- Automatic playback tick (runs each frame while playing) ---
     let mut auto_advance: Option<usize> = None;
 
-    if state.volatile.md_local.viewer.playing
-        && !state.volatile.md_local.viewer.snapshots.is_empty()
-        && state.volatile.md_local.viewer.mols_and_traj_synced()
-    {
+    if state.volatile.md_local.viewer.playing {
         state.volatile.md_local.viewer.playback_accum += state.ui.dt_render as f64;
         let interval = 1.0 / state.volatile.md_local.viewer.playback_ratio.max(0.1);
 
@@ -102,55 +165,7 @@ pub(in crate::ui) fn dynamics_viewer(
 
     // --- Controls row ---
     ui.horizontal(|ui| {
-        let help_text = "Toggle between viewing the original (pre-dynamics) atom positions, and \
-        ones at the selected dynamics snapshot.";
-
-        let ready = state.volatile.md_local.viewer.mols_and_traj_synced();
-
-        if !state.volatile.md_local.viewer.snapshots.is_empty()
-            && ui
-                .button(RichText::new("Clear Traj"))
-                .on_hover_text("Clear all trajectory snapshots, e.g. erase the previous run.")
-                .clicked()
-        {
-            state.clear_md_frames(scene, redraw, updates);
-
-            if let Some(molecule) = cam_target_mol(state) {
-                move_cam_to_mol_front(state, scene, molecule, updates);
-            }
-        }
-
-        if !ready {
-            let txt = if state.volatile.md_local.viewer.snapshots.is_empty() {
-                "Not ready for MD playback; no snapshots/frames loaded.".to_owned()
-            } else {
-                let mut t =
-                    "Not ready for MD playback; trajectory and mol set atom count mismatch: "
-                        .to_owned();
-
-                let viewer = &state.volatile.md_local.viewer;
-
-                if !viewer.snapshots.is_empty() && viewer.get_active_mol_set().is_some() {
-                    t.push_str(&format!(
-                        "Traj: {} Mol set: {}",
-                        state.volatile.md_local.viewer.snapshots[0]
-                            .atom_posits
-                            .len(),
-                        state
-                            .volatile
-                            .md_local
-                            .viewer
-                            .get_active_mol_set()
-                            .unwrap()
-                            .atom_count
-                    ));
-                }
-                t
-            };
-
-            label!(ui, txt, Color32::GRAY);
-            return;
-        }
+        clear_traj_btn(state, scene, updates, redraw, ui);
 
         ui.add_space(COL_SPACING);
 
@@ -185,21 +200,49 @@ pub(in crate::ui) fn dynamics_viewer(
     });
 
     // --- Snapshot position slider ---
-    let ready = state.volatile.md_local.viewer.mols_and_traj_synced();
-    if ready && !state.volatile.md_local.viewer.snapshots.is_empty() {
+    // Clear Traj may have emptied the frames.
+    if state.volatile.md_local.viewer.mols_and_traj_synced() {
         let slider_posit_prev = state.volatile.md_local.viewer.slider_posit_ui;
 
         ui.horizontal(|ui| {
+            let viewer = &state.volatile.md_local.viewer;
+            let i_max = viewer.snapshots.len() - 1;
+            let traj = state.trajectories.iter().find(|t| t.ui_active);
+
+            // Some files, e.g. from MDposit, have no frame times.
+            let frame_label = |i: usize, time: f64| match traj {
+                Some(traj) if !traj.has_times() => format!("Frame {}", traj.frame_index(i)),
+                _ => format!("{time:.2} ps"),
+            };
+
+            let label = match (viewer.current_snapshot, viewer.get_active_snap()) {
+                (Some(i), Some(ss)) => Some(frame_label(i, ss.time)),
+                _ => None,
+            };
+
+            // Reserve room for the value box and label at their widest, so neither spills off
+            // the right, and the slider doesn't change width during playback. The right margin
+            // matches the left.
+            let label_max = frame_label(i_max, viewer.snapshots[i_max].time);
+            let spacing = ui.spacing();
+            let value_width = (text_width(ui, &i_max.to_string(), TextStyle::Button)
+                + 2. * spacing.button_padding.x)
+                .max(spacing.interact_size.x);
+            let reserved = value_width
+                + text_width(ui, &label_max, TextStyle::Body)
+                + 2. * spacing.item_spacing.x
+                + ROW_SPACING;
+
             ui.add_space(ROW_SPACING);
-            ui.spacing_mut().slider_width = ui.available_width() - 100.;
+            ui.spacing_mut().slider_width = (ui.available_width() - reserved).max(0.);
 
             ui.add(Slider::new(
                 &mut state.volatile.md_local.viewer.slider_posit_ui,
-                0..=state.volatile.md_local.viewer.snapshots.len() - 1,
+                0..=i_max,
             ));
 
-            if let Some(ss) = &state.volatile.md_local.viewer.get_active_snap() {
-                ui.label(format!("{:.2} ps", ss.time));
+            if let Some(label) = label {
+                ui.label(label);
             }
         });
 
@@ -338,7 +381,13 @@ fn make_water_mol(start_i: usize) -> ViewerMolecule {
 ///
 /// Sets are stored in the .gro format; GROMACS's text-based format for this. This window lets you create
 /// new sets, and edit existing ones.
-pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
+pub(in crate::ui) fn md_mol_set_editor(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    ui: &mut Ui,
+    redraw: &mut RedrawFlags,
+) {
     ui.horizontal(|ui| {
         label!(
             ui,
@@ -665,6 +714,16 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
             .mols
             .push(mol);
         state.volatile.md_local.viewer.mol_sets[set_i].update_derivative_vals();
+
+        // Saves clicking "Set" after building the first set.
+        if state.volatile.md_local.viewer.mol_set_active.is_none() {
+            state.volatile.md_local.viewer.mol_set_active = Some(set_i);
+
+            let name = &state.volatile.md_local.viewer.mol_sets[set_i].name;
+            handle_success(&mut state.ui, format!("Set {name} as the active mol set"));
+
+            show_active_mol_set(state, scene, updates, redraw);
+        }
     }
 
     // --- Fill rest with water ---
@@ -747,6 +806,94 @@ pub(in crate::ui) fn md_mol_set_editor(state: &mut State, ui: &mut Ui) {
     }
 
     ui.add_space(ROW_SPACING);
+}
+
+/// Draws the active mol set at the current snapshot.
+fn show_active_mol_set(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+) {
+    redraw.set_all();
+
+    let snap_i = state.volatile.md_local.viewer.current_snapshot.unwrap_or(0);
+    if state
+        .volatile
+        .md_local
+        .viewer
+        .change_snapshot(snap_i)
+        .is_err()
+    {
+        handle_err(&mut state.ui, "Error changing snaps".to_string());
+    }
+
+    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
+    viewer::draw_mols(state, scene, updates);
+}
+
+/// The active molecule, if it can go in a mol set.
+fn active_set_mol(state: &State) -> Option<(MolType, &MoleculeCommon)> {
+    let (mol_type, i) = state.volatile.active_mol?;
+    let mol = match mol_type {
+        MolType::Peptide => &state.peptides.get(i)?.common,
+        MolType::Ligand => &state.ligands.get(i)?.common,
+        MolType::NucleicAcid => &state.nucleic_acids.get(i)?.common,
+        MolType::Lipid => &state.lipids.get(i)?.common,
+        _ => return None,
+    };
+
+    Some((mol_type, mol))
+}
+
+/// The active molecule's name, truncated, if it can go in a mol set.
+pub(in crate::ui) fn set_candidate_name(state: &State) -> Option<String> {
+    const MAX_LEN: usize = 16;
+
+    let (_, mol) = active_set_mol(state)?;
+    let name = mol.name.as_deref().unwrap_or(&mol.ident);
+    if name.chars().count() <= MAX_LEN {
+        return Some(name.to_owned());
+    }
+
+    let mut result: String = name.chars().take(MAX_LEN - 1).collect();
+    result.push('…');
+
+    Some(result)
+}
+
+/// Creates a mol set from the active molecule, and makes it active. Equivalent to Edit sets → New
+/// → adding the molecule.
+pub(in crate::ui) fn create_set_from_active_mol(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+) {
+    let Some((mol_type, mol)) = active_set_mol(state) else {
+        return;
+    };
+    let mol = ViewerMolecule {
+        mol_type,
+        range: (0, mol.atoms.len()),
+        mol: mol.clone(),
+    };
+
+    let viewer = &mut state.volatile.md_local.viewer;
+    let name = format!("Set {}", viewer.mol_sets.len() + 1);
+    viewer
+        .mol_sets
+        .push(viewer::ViewerMolSet::new(None, name.clone(), vec![mol]));
+
+    let set_i = viewer.mol_sets.len() - 1;
+    viewer.mol_set_active = Some(set_i);
+    state.ui.md.set_editor_active_set = Some(set_i);
+
+    handle_success(&mut state.ui, format!("Set {name} as the active mol set"));
+
+    if state.volatile.md_local.viewer.mols_and_traj_synced() {
+        show_active_mol_set(state, scene, updates, redraw);
+    }
 }
 
 /// Selected from loaded molecule sets, which map molecules to a trajectory's flat atoms.
@@ -923,14 +1070,7 @@ pub(in crate::ui) fn viewer_mol_set(
                 redraw.set_all();
 
                 if state.volatile.md_local.viewer.mol_set_active.is_some() {
-                    let snap_i = state.volatile.md_local.viewer.current_snapshot.unwrap_or(0);
-
-                    if state.volatile.md_local.viewer.change_snapshot(snap_i).is_err() {
-                        handle_err(&mut state.ui, "Error changing snaps".to_string());
-                    }
-
-                    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
-                    viewer::draw_mols(state, scene, updates);
+                    show_active_mol_set(state, scene, updates, redraw);
                 }
             }
 
@@ -968,6 +1108,7 @@ pub(in crate::ui) fn viewer_mol_set(
                     .volatile
                     .md_local
                     .clear_snaps(&mut scene.entities, redraw);
+                set_viewed(&mut state.trajectories, None);
                 updates.entities = EntityUpdate::All;
             }
         }

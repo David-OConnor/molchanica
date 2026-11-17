@@ -91,6 +91,6 @@ pub use paths::{
     bundle_root, data_root, find_executable, find_rdkit_python, home_directory,
     migrate_legacy_data, process_executables_dir,
 };
-pub use process::{RunControl, ToolWorkspace, run_tool};
+pub use process::{RunControl, ToolWorkspace, run_tool, run_tool_logged};
 pub use registry::{Tool, ToolAdapter};
 pub use status::{CheckResult, ToolCheckUpdate, ToolStatus, check_all, check_tools, is_installed};

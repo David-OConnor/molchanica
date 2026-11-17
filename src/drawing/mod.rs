@@ -43,6 +43,7 @@ use crate::{
 
 pub mod aa_highlight;
 pub mod atoms_bonds;
+pub mod floor;
 pub mod peptide;
 pub mod representations;
 pub mod ribbon_mesh;
@@ -292,6 +293,7 @@ pub enum EntityClass {
     Pocket = 13,
     Representation = 14,
     SelectionHighlight = 15,
+    Floor = 16,
     Other = 99,
 }
 

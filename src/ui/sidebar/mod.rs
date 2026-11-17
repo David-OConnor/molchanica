@@ -17,7 +17,7 @@ use crate::{
     md::{
         trajectory::{
             MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj, format_bytes,
-            load_summary, unload_traj,
+            load_summary, set_viewed, unload_traj,
         },
         viewer,
         viewer::ViewerMolSet,
@@ -123,36 +123,6 @@ fn merge_mol_specific_params(
     match specific {
         Some(specific) => merge_params(general, specific),
         None => general.clone(),
-    }
-}
-
-fn open_tools(state: &mut State, ui: &mut Ui) {
-    let color_open_tools = if state.peptides.is_empty() && state.ligands.is_empty() {
-        COLOR_ACTION
-    } else {
-        COLOR_INACTIVE
-    };
-
-    if button!(
-        ui,
-        "Open",
-        color_open_tools,
-        "Open a molecule, electron density, or other file from disk."
-    )
-    .clicked()
-    {
-        state.volatile.dialogs.load.pick_file();
-    }
-
-    if button!(
-        ui,
-        "Recent",
-        color_open_tools,
-        "Select a recently-opened file to open"
-    )
-    .clicked()
-    {
-        state.ui.popup.recent_files = !state.ui.popup.recent_files;
     }
 }
 
@@ -481,13 +451,37 @@ pub(in crate::ui) fn sidebar(
                     COLOR_INACTIVE
                 };
 
-                if ui
-                    .button(RichText::new("Open").color(color_open_tools))
-                    .on_hover_text("Open a molecule, electron density, or other file from disk.")
-                    .clicked()
-                {
-                    state.volatile.dialogs.load.pick_file();
-                }
+                ui.menu_button(RichText::new("File").color(color_open_tools), |ui| {
+                    if ui
+                        .button("Open")
+                        .on_hover_text("Open a molecule, sequence electron density, trajectory, parameters file, or other file from disk.")
+                        .clicked()
+                    {
+                        state.volatile.dialogs.load.pick_file();
+                        ui.close();
+                    }
+
+                    if ui
+                        .add_enabled(can_save_active(state), egui::Button::new("Save mol"))
+                        .on_hover_text("Save the active molecule or sequence to a file.")
+                        .clicked()
+                    {
+                        save_active(state);
+                        ui.close();
+                    }
+
+                    ui.separator();
+
+                    if ui.button("Open project").clicked() {
+                        state.volatile.dialogs.project_load.pick_file();
+                        ui.close();
+                    }
+
+                    if ui.button("Save project").clicked() {
+                        state.volatile.dialogs.project_save.save_file();
+                        ui.close();
+                    }
+                });
 
                 if ui
                     .button(RichText::new("Recent").color(color_open_tools))
@@ -495,16 +489,6 @@ pub(in crate::ui) fn sidebar(
                     .clicked()
                 {
                     state.ui.popup.recent_files = !state.ui.popup.recent_files;
-                    open_tools(state, ui);
-                }
-
-                if can_save_active(state)
-                    && ui
-                        .button(RichText::new("Save"))
-                        .on_hover_text("Save the active molecule or sequence to a file.")
-                        .clicked()
-                {
-                    save_active(state);
                 }
             });
 
@@ -823,6 +807,18 @@ fn traj_load_size(n_frames: usize, frame_bytes: usize, ui: &mut Ui) {
         .on_hover_text(hover);
 }
 
+/// E.g. "20 frames", "1.5k frames", "250k frames".
+fn frames_text(n: usize) -> String {
+    let k = n as f32 / 1_000.;
+
+    match n {
+        1 => "1 frame".to_owned(),
+        ..1_000 => format!("{n} frames"),
+        ..10_000 => format!("{k:.1}k frames"),
+        _ => format!("{k:.0}k frames"),
+    }
+}
+
 /// Let the user view open trajectories, and possibly change frames etc from them.
 fn traj_items(
     state: &mut State,
@@ -846,6 +842,8 @@ fn traj_items(
     // Set when loading from disk.
     let mut load_msg = None;
     let mut traj_active = None;
+    let mut create_set = false;
+    let active_mol_name = md_viewer::set_candidate_name(state);
 
     let md = &mut state.volatile.md_local;
     for (i, traj) in state.trajectories.iter_mut().enumerate() {
@@ -880,26 +878,44 @@ fn traj_items(
                 num_field(&mut traj.ui_start_i, "", 60, ui);
                 ui.label("-");
                 num_field(&mut traj.ui_end_i, "", 60, ui);
-                num_field(&mut traj.ui_step, "step", 28, ui);
+
+                // Line break to keep the sidebar width under control
+            });
+
+            ui.horizontal(|ui| {
+                num_field(&mut traj.ui_step, "Step", 40, ui);
 
                 let n_load = traj.ui_frames_selected();
 
                 if matches!(traj.source, TrajectorySource::File(_)) {
+                    ui.label(frames_text(n_load));
                     traj_load_size(n_load, traj.frame_bytes, ui);
                 }
 
                 // todo: ALso check on time if that's the bounds. For now, we have index only, as a start.
-                if n_load > 0
-                    && n_load <= MAX_FRAMES_TO_ATTEMPT_LOADING
-                    && matches!(traj.source, TrajectorySource::File(_))
-                    && button!(
-                        ui,
-                        "Load",
-                        COLOR_ACTION,
-                        "Load frames/snapshots from the selected indices into memory"
+                let load_clicked = matches!(traj.source, TrajectorySource::File(_)) && {
+                    let disabled_reason = if n_load == 0 {
+                        "No frames selected. Check the range.".to_owned()
+                    } else {
+                        format!(
+                            "{n_load} frames selected; the max is \
+                            {MAX_FRAMES_TO_ATTEMPT_LOADING}. Increase step, or narrow the range."
+                        )
+                    };
+
+                    ui.add_enabled(
+                        n_load > 0 && n_load <= MAX_FRAMES_TO_ATTEMPT_LOADING,
+                        egui::Button::new(RichText::new("Load").color(COLOR_ACTION)),
                     )
+                    .on_hover_text(
+                        "Load frames from the selected indices into memory, and view them. \
+                        Frees frames loaded from other trajectories.",
+                    )
+                    .on_disabled_hover_text(disabled_reason)
                     .clicked()
-                {
+                };
+
+                if load_clicked {
                     let start = (traj.ui_start_i > 0).then_some(traj.ui_start_i);
                     let end = (traj.ui_end_i + 1 < traj.num_frames).then_some(traj.ui_end_i);
 
@@ -957,22 +973,32 @@ fn traj_items(
                 }
             });
 
+            let times = if traj.has_times() {
+                format!("dt: {:.3}ps, end: {:.1}ps", traj.dt, traj.end_time)
+            } else {
+                "no frame times".to_owned()
+            };
             let txt = format!(
-                "At: {}, Fr: {}, step: {:.3}, inter: {}, dt: {:.3}ps, end: {:.1}ps",
-                traj.num_atoms,
-                traj.num_frames,
-                traj.start_step,
-                traj.save_interval_steps,
-                traj.dt,
-                traj.end_time,
+                "At: {}, Fr: {}, step: {:.3}, inter: {}, {times}",
+                traj.num_atoms, traj.num_frames, traj.start_step, traj.save_interval_steps,
             );
             ui.label(RichText::new(txt).color(Color32::WHITE));
 
+            // Only the viewed trajectory has frames open, and the viewer holds them.
             if let Some(slice) = &traj.frames_open {
-                label!(ui, format!("Open: {slice}"), COLOR_ACTIVE);
+                let n = frames_text(md.viewer.snapshots.len());
+                label!(ui, format!("Loaded: {slice}, {n}"), COLOR_ACTIVE);
             }
 
-            match md.viewer.get_active_mol_set() {
+            let set = match &traj.run_mol_set_path {
+                Some(path) => md
+                    .viewer
+                    .mol_sets
+                    .iter()
+                    .find(|set| set.path.as_ref() == Some(path)),
+                None => md.viewer.get_active_mol_set(),
+            };
+            match set {
                 Some(set) => {
                     if set.atom_count == traj.num_atoms {
                         label!(
@@ -986,13 +1012,31 @@ fn traj_items(
                     } else {
                         label!(
                             ui,
-                            format!("Mol set mismatch. {} atoms in set", set.atom_count),
+                            format!(
+                                "Mol set mismatch. Set: {} atoms, traj: {}",
+                                set.atom_count, traj.num_atoms
+                            ),
                             Color32::YELLOW
                         );
                     }
                 }
                 None => {
-                    label!(ui, "No mol set loaded", Color32::LIGHT_RED);
+                    ui.horizontal(|ui| {
+                        label!(ui, "No mol set loaded", Color32::LIGHT_RED);
+
+                        if let Some(name) = &active_mol_name
+                            && button!(
+                                ui,
+                                format!("Create set from {name}"),
+                                COLOR_ACTION,
+                                "Create a mol set containing the active molecule, and make it \
+                                the active set."
+                            )
+                            .clicked()
+                        {
+                            create_set = true;
+                        }
+                    });
                 }
             }
         });
@@ -1026,10 +1070,11 @@ fn traj_items(
     }
 
     if let Some(i) = traj_active {
-        // Note: `load_snaps` sets active, but doesn't clear this flag from others.
-        for (j, traj) in state.trajectories.iter_mut().enumerate() {
-            traj.ui_active = i == j;
-        }
+        set_viewed(&mut state.trajectories, Some(i));
+    }
+
+    if create_set {
+        md_viewer::create_set_from_active_mol(state, scene, updates, redraw);
     }
 }
 
@@ -1074,9 +1119,7 @@ fn md_property_runners(
         ) {
             Ok((data, snaps)) => {
                 let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
-                for traj in &mut state.trajectories {
-                    traj.ui_active = false;
-                }
+                set_viewed(&mut state.trajectories, None);
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps,
                     "Crystal sim".to_string(),
@@ -1122,9 +1165,7 @@ fn md_property_runners(
                 };
 
                 let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
-                for traj in &mut state.trajectories {
-                    traj.ui_active = false;
-                }
+                set_viewed(&mut state.trajectories, None);
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
                     "Water sol sim".to_string(),
@@ -1194,9 +1235,7 @@ fn md_property_runners(
                     .unwrap_or_default();
 
                 let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
-                for traj in &mut state.trajectories {
-                    traj.ui_active = false;
-                }
+                set_viewed(&mut state.trajectories, None);
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
                     "Water/solute layer sim".to_string(),
@@ -1269,9 +1308,7 @@ fn md_property_runners(
                     .unwrap_or(data.water_molecule_count);
 
                 let snaps: Vec<_> = snaps.into_iter().map(std::sync::Arc::new).collect();
-                for traj in &mut state.trajectories {
-                    traj.ui_active = false;
-                }
+                set_viewed(&mut state.trajectories, None);
                 state.trajectories.push(Trajectory::new_in_memory(
                     snaps.clone(),
                     "Shrinking box sim".to_string(),
