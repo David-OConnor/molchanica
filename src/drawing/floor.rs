@@ -2,9 +2,10 @@
 //! an absolute spatial reference.
 //!
 //! The floor is a disc centered under the camera, fading out before the far clip plane, so it
-//! appears infinite. It's transparent, so atoms below it remain visible.
+//! appears infinite. It's transparent, so atoms below it remain visible. Visible molecular
+//! meshes cast shadows from the scene's point lights.
 
-use graphics::{Camera, EngineUpdates, Entity, EntityUpdate, Mesh, Scene, Vertex};
+use graphics::{Camera, EngineUpdates, Entity, EntityUpdate, FloorShadows, Mesh, Scene, Vertex};
 use lin_alg::f32::{Quaternion, Vec3};
 
 use crate::{
@@ -51,6 +52,17 @@ const PEP_SAMPLE_RATIO: usize = 10;
 const MD_SAMPLE_RATIO: usize = 10;
 
 const CLASS: u32 = EntityClass::Floor as u32;
+const SHADOW_CASTERS: [EntityClass; 9] = [
+    EntityClass::Protein,
+    EntityClass::Ligand,
+    EntityClass::NucleicAcid,
+    EntityClass::Lipid,
+    EntityClass::SecondaryStructure,
+    EntityClass::SaSurface,
+    EntityClass::SaSurfaceDots,
+    EntityClass::Representation,
+    EntityClass::WaterModel,
+];
 
 /// Where the floor entities are, relative to the camera.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -259,6 +271,7 @@ fn sample_posits(state: &State) -> Box<dyn Iterator<Item = Vec3> + '_> {
 /// Show or hide the floor. When showing, fit its height to the current molecules.
 pub fn toggle(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     if state.ui.floor.take().is_some() {
+        scene.floor_shadows = None;
         let len_before = scene.entities.len();
         scene.entities.retain(|ent| ent.class != CLASS);
 
@@ -280,6 +293,15 @@ pub fn update(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates)
     let Some(floor) = &mut state.ui.floor else {
         return;
     };
+
+    let shadows = scene.floor_shadows.get_or_insert_with(|| FloorShadows {
+        y: floor.y,
+        receiver_mesh: MESH_FLOOR,
+        caster_classes: SHADOW_CASTERS.map(|class| class as u32).to_vec(),
+        strength: state.to_save.graphics.floor_shadow_strength,
+    });
+    shadows.y = floor.y;
+    shadows.strength = state.to_save.graphics.floor_shadow_strength;
 
     let placement = Placement::new(floor.y, &scene.camera);
     let rebuilding = matches!(updates.entities, EntityUpdate::All);

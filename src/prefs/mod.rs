@@ -178,6 +178,8 @@ pub struct Graphics {
     pub ssao_radius: f32,
     pub edge_cueing: Option<f32>,
     pub depth_aware_halos: Option<f32>,
+    /// How much direct light a fully covered floor shadow blocks.
+    pub floor_shadow_strength: f32,
 }
 
 impl Default for Graphics {
@@ -195,6 +197,7 @@ impl Default for Graphics {
             ssao_radius: 10.0,
             edge_cueing: Some(1.),
             depth_aware_halos: Some(0.03),
+            floor_shadow_strength: 0.85,
         }
     }
 }

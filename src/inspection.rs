@@ -1083,7 +1083,7 @@ impl SceneState {
     }
 
     pub fn apply(&self, state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-        state.to_save.graphics = self.graphics.restore();
+        state.to_save.graphics = self.graphics.restore(&state.to_save.graphics);
         state.graphics_settings = state.to_save.graphics.to_engine();
         updates.graphics_settings = Some(state.graphics_settings.clone());
         state.ui.aa_selection = self.aa_selection.clone();
@@ -1221,7 +1221,7 @@ impl GraphicsState {
         }
     }
 
-    fn restore(&self) -> crate::prefs::Graphics {
+    fn restore(&self, current: &crate::prefs::Graphics) -> crate::prefs::Graphics {
         crate::prefs::Graphics {
             msaa: self.msaa,
             msaa_user_set: true,
@@ -1233,6 +1233,7 @@ impl GraphicsState {
             ssao_radius: self.radius,
             edge_cueing: self.edges,
             depth_aware_halos: self.halos,
+            floor_shadow_strength: current.floor_shadow_strength,
         }
     }
 }

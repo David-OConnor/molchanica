@@ -66,7 +66,7 @@ pub(crate) fn cam_controls(
     if ui
         .button(RichText::new("Floor").color(misc::active_color(state.ui.floor.is_some())))
         .on_hover_text(
-            "Show a floor below the molecules, with the X (red) and Z (blue) axes through the origin. \
+            "Show a floor with molecule shadows and X (red) and Z (blue) axes through the origin. \
             Its height is set from the open molecules when enabled.",
         )
         .clicked()

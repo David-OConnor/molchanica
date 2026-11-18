@@ -1007,37 +1007,39 @@ pub(in crate::ui) fn viewer_mol_set(
 
             let max_count = 5;
             for group in sorted_groups_display.iter().take(max_count) {
-if button!(
-            ui,
-            "Set",
-            COLOR_ACTION,
-            "Load this set of molecules into the MD trajectory atoms. This affects \
-        how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
-        ).clicked() {
-                    state.volatile.md_local.viewer.mol_set_active = if active {
-                        None }
-                    else {
-                        Some(i)
-                    };
 
-                    set_clicked = true;
-                    handle_success(&mut state.ui, format!("Set {} as the active mol set", set_name));
-                }
+            ui.horizontal(|ui| {if button!(
+                ui,
+                "Set",
+                COLOR_ACTION,
+                "Load this set of molecules into the MD trajectory atoms. This affects \
+            how the atoms in the trajectory are visually mapped to molecules with covalent bonds, the correct element etc."
+            ).clicked() {
+                        state.volatile.md_local.viewer.mol_set_active = if active {
+                            None }
+                        else {
+                            Some(i)
+                        };
 
-                if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
-                    let name = format!("{}.gro", set_name.replace(' ', "_"));
-                    state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
-                    state.volatile.dialogs.save_gro_mol_set_i = Some(i);
-                    state.volatile.dialogs.save_gro.save_file();
-                }
+                        set_clicked = true;
+                        handle_success(&mut state.ui, format!("Set {} as the active mol set", set_name));
+                    }
 
-                if ui
-                    .button(RichText::new("❌").color(COLOR_REMOVE))
-                    .on_hover_text("Close this molecule set.")
-                    .clicked()
-                {
-                    close = Some(i);
-                }
+                    if button!(ui, "Save", COLOR_ACTION, "Save this mol set as a GRO file.").clicked() {
+                        let name = format!("{}.gro", set_name.replace(' ', "_"));
+                        state.volatile.dialogs.save_gro.config_mut().default_file_name = name;
+                        state.volatile.dialogs.save_gro_mol_set_i = Some(i);
+                        state.volatile.dialogs.save_gro.save_file();
+                    }
+
+                    if ui
+                        .button(RichText::new("❌").color(COLOR_REMOVE))
+                        .on_hover_text("Close this molecule set.")
+                        .clicked()
+                    {
+                        close = Some(i);
+                    }
+            });
 
                 ui.horizontal(|ui| {
                     let text = if group.mol_count > 1 {

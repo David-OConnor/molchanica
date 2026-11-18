@@ -188,6 +188,15 @@ fn graphics_settings(state: &mut State, ui: &mut Ui, updates: &mut EngineUpdates
             save |= interaction_finished(&resp);
         }
 
+        let resp = slider_row(
+            ui,
+            "Floor shadow strength",
+            "How much direct light molecules block on the floor. 0 disables shadows.",
+            Slider::new(&mut gr.floor_shadow_strength, 0.0..=1.0).fixed_decimals(2),
+        );
+        changed |= resp.changed();
+        save |= interaction_finished(&resp);
+
         {
             let mut val = gr.edge_cueing.unwrap_or_default();
             let resp = slider_row(

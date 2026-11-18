@@ -1143,6 +1143,7 @@ impl Graphics {
         // order: `from_bytes` treats their absence as "prefs written before this setting existed".
         out.extend_from_slice(&self.ssao_radius.to_le_bytes());
         out.push(self.msaa_user_set as u8);
+        out.extend_from_slice(&self.floor_shadow_strength.to_le_bytes());
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1186,6 +1187,12 @@ impl Graphics {
         // Absent in older prefs files: treat their MSAA value as the default, not a user choice,
         // so it can follow the GPU.
         let msaa_user_set = i < data.len() && data[i] != 0;
+        i += 1;
+        let floor_shadow_strength = if i + 4 <= data.len() {
+            parse_le!(data, f32, i..i + 4)
+        } else {
+            Self::default().floor_shadow_strength
+        };
 
         Ok(Self {
             msaa,
@@ -1194,6 +1201,7 @@ impl Graphics {
             ssao_radius,
             edge_cueing,
             depth_aware_halos,
+            floor_shadow_strength,
         })
     }
 }
