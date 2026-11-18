@@ -18,9 +18,16 @@ use bio_files::{
     xtc::{XtcMetadata, read_xtc},
 };
 use dynamics::snapshot::Snapshot;
+use graphics::{EngineUpdates, Scene};
 use lin_alg::f32::Vec3;
 
-use crate::{prefs::OpenType, state::State};
+use super::viewer;
+use crate::{
+    cam::{VIEW_DIR_FRONT, reset_camera},
+    prefs::OpenType,
+    state::State,
+    util::RedrawFlags,
+};
 
 // Don't let the user attempt to import more than this many frames at once
 // todo: What should this be?
@@ -553,6 +560,48 @@ impl Trajectory {
 
         Ok(snaps)
     }
+}
+
+/// Load trajectory `i`'s frames, per its UI range and step, into the viewer, and show them. Pairs
+/// them with the trajectory's mol set, if it has one, and frees frames loaded from other
+/// trajectories. Returns a summary of the load.
+pub fn view_traj(
+    state: &mut State,
+    i: usize,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+) -> io::Result<String> {
+    let md = &mut state.volatile.md_local;
+    let traj = state
+        .trajectories
+        .get_mut(i)
+        .ok_or_else(|| io::Error::other("Trajectory index out of bounds"))?;
+
+    let start = (traj.ui_start_i > 0).then_some(traj.ui_start_i);
+    let end = (traj.ui_end_i + 1 < traj.num_frames).then_some(traj.ui_end_i);
+    let snaps = traj.load_snaps(FrameSlice::Index {
+        start,
+        end,
+        step: traj.ui_step,
+    })?;
+
+    if let Some(path) = &traj.run_mol_set_path {
+        md.viewer.mol_set_active = md
+            .viewer
+            .mol_sets
+            .iter()
+            .position(|set| set.path.as_ref() == Some(path));
+    }
+    let summary = load_summary(&snaps, Some(traj.num_frames), traj.ui_step.max(1), None);
+    md.replace_snaps(snaps);
+    set_viewed(&mut state.trajectories, Some(i));
+
+    reset_camera(state, scene, updates, VIEW_DIR_FRONT);
+    viewer::draw_mols(state, scene, updates);
+    redraw.set_all();
+
+    Ok(summary)
 }
 
 /// Marks trajectory `i` as the one whose frames the viewer holds. The viewer holds one trajectory's

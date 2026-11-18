@@ -2,6 +2,7 @@
 
 use std::{
     io,
+    path::PathBuf,
     sync::mpsc::{self, TryRecvError},
     thread,
     time::Duration,
@@ -9,17 +10,18 @@ use std::{
 
 use bio_apis::mdposit::{Client, TrajectoryFormat};
 use egui::{Button, Color32, ComboBox, Context, DragValue, Pos2, RichText, Ui, Window};
+use graphics::{EngineUpdates, Scene};
 
 use crate::{
     md::{
-        mdposit::{self, Download, Import, JobResult},
-        trajectory::{Trajectory, TrajectorySource},
+        mdposit::{self, Download, Import, JobResult, QuickTraj},
+        trajectory::{Trajectory, TrajectorySource, view_traj},
         viewer::ViewerMolSet,
     },
-    prefs::OpenType,
+    prefs::{MdPrefs, OpenType},
     state::State,
     ui::COLOR_ACTION,
-    util::handle_success,
+    util::{RedrawFlags, handle_err, handle_success},
 };
 
 impl Import {
@@ -32,9 +34,54 @@ impl Import {
         *self = Self {
             anchor: Some(anchor),
             step: 1,
+            quick: self.quick.take(),
             ..Self::default()
         };
         self.search(pdb_id, 1, ctx);
+    }
+
+    /// Start a Quick Traj download: no window, and it plays once ready. `residues` is the open
+    /// structure's amino acid count, for matching. Ignored while one is in progress.
+    pub fn quick(
+        &mut self,
+        pdb_id: String,
+        residues: usize,
+        md: &MdPrefs,
+        prefs_dir: PathBuf,
+        ctx: &Context,
+    ) {
+        if self.quick.is_some() {
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        let id = pdb_id.clone();
+        let (target_mb, span) = (md.quick_traj_target_mb, md.quick_traj_span);
+
+        thread::spawn(move || {
+            let _ = tx.send(mdposit::quick_download(
+                &id, residues, target_mb, span, &prefs_dir,
+            ));
+            ctx.request_repaint();
+        });
+        self.quick = Some((pdb_id, rx));
+    }
+
+    pub fn quick_running(&self) -> bool {
+        self.quick.is_some()
+    }
+
+    fn poll_quick(&mut self) -> Option<(String, io::Result<Option<QuickTraj>>)> {
+        let (_, receiver) = self.quick.as_ref()?;
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => Err(io::Error::other("MDposit worker stopped")),
+        };
+        let (pdb_id, _) = self.quick.take()?;
+
+        Some((pdb_id, result))
     }
 
     fn launch(
@@ -194,18 +241,89 @@ impl Import {
     }
 }
 
-pub(in crate::ui) fn show(state: &mut State, ctx: &Context) {
+/// Add a downloaded trajectory and its structure to the open trajectories. Returns its index.
+fn add_download(state: &mut State, trajectory: Trajectory, set: ViewerMolSet) -> Option<usize> {
+    let path = match &trajectory.source {
+        TrajectorySource::File(path) => path.clone(),
+        TrajectorySource::Memory(_) => unreachable!(),
+    };
+
+    mdposit::register(state, trajectory, Some(set));
+    state.update_history(&path, OpenType::Trajectory, None);
+    state.to_save.save_flag = true;
+    state.ui.ui_vis.sidebar = true;
+
+    state
+        .trajectories
+        .iter()
+        .position(|t| matches!(&t.source, TrajectorySource::File(p) if *p == path))
+}
+
+/// Load a finished Quick Traj download's frames, and play them on a loop.
+fn finish_quick(
+    state: &mut State,
+    pdb_id: &str,
+    result: io::Result<Option<QuickTraj>>,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+) {
+    let quick = match result {
+        Ok(Some(quick)) => quick,
+        // Not an error; MDposit has simulations of only some structures.
+        Ok(None) => {
+            handle_success(
+                &mut state.ui,
+                format!("Can't find a MdPosit trajectory for {pdb_id}"),
+            );
+            return;
+        }
+        Err(e) => {
+            handle_err(
+                &mut state.ui,
+                format!("Error downloading an MDposit trajectory for {pdb_id}: {e}"),
+            );
+            return;
+        }
+    };
+
+    let Some(i) = add_download(state, quick.trajectory, quick.set) else {
+        return;
+    };
+
+    if let Err(e) = view_traj(state, i, scene, updates, redraw) {
+        handle_err(
+            &mut state.ui,
+            format!("Error loading snapshots from trajectory: {e:?}"),
+        );
+        return;
+    }
+
+    let viewer = &mut state.volatile.md_local.viewer;
+    viewer.playing = true;
+    viewer.looping = true;
+    viewer.playback_accum = 0.;
+
+    handle_success(&mut state.ui, format!("Playing {}", quick.summary));
+}
+
+pub(in crate::ui) fn show(
+    state: &mut State,
+    scene: &mut Scene,
+    updates: &mut EngineUpdates,
+    redraw: &mut RedrawFlags,
+    ctx: &Context,
+) {
+    if let Some((pdb_id, result)) = state.volatile.mdposit.poll_quick() {
+        finish_quick(state, &pdb_id, result, scene, updates, redraw);
+        ctx.request_repaint();
+    } else if state.volatile.mdposit.quick_running() {
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+
     let importer = &mut state.volatile.mdposit;
     if let Some((trajectory, set)) = importer.poll() {
-        let path = match &trajectory.source {
-            TrajectorySource::File(path) => path.clone(),
-            TrajectorySource::Memory(_) => unreachable!(),
-        };
-
-        mdposit::register(state, trajectory, Some(set));
-        state.update_history(&path, OpenType::Trajectory, None);
-        state.to_save.save_flag = true;
-        state.ui.ui_vis.sidebar = true;
+        add_download(state, trajectory, set);
         handle_success(
             &mut state.ui,
             "MDposit trajectory ready. Use Load under MD Trajectories in the sidebar.".to_owned(),
@@ -266,7 +384,9 @@ pub(in crate::ui) fn show(state: &mut State, ctx: &Context) {
     if let Some(download) = download {
         let prefs_dir = state.volatile.prefs_dir.clone();
         importer.launch("Downloading structure and trajectory…", ctx, move || {
-            download.save(&prefs_dir)
+            download
+                .save(&prefs_dir)
+                .map(|(trajectory, set)| JobResult::Download(trajectory, set))
         });
     }
     if !open {

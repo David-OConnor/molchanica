@@ -8,7 +8,7 @@ use bio_files::{
     md_params::{BondStretchingParams, ForceFieldParams},
 };
 use dynamics::merge_params;
-use egui::{Color32, RichText, Ui};
+use egui::{Button, Color32, RichText, Ui};
 use graphics::{EngineUpdates, Scene};
 use lin_alg::f64::Vec3;
 use mol_defs::molecules::{
@@ -635,7 +635,40 @@ fn display_peptide_actions(
                 state
                     .volatile
                     .mdposit
-                    .open(pdb_id, button.rect.left_bottom(), ui.ctx());
+                    .open(pdb_id.clone(), button.rect.left_bottom(), ui.ctx());
+            }
+
+            let running = state.volatile.mdposit.quick_running();
+            let quick = ui
+                .add_enabled(!running, Button::new("Quick Traj"))
+                .on_hover_text(format!(
+                    "Download a trajectory of {pdb_id} from the best-matching MDposit \
+                    simulation, and play it. Set its download size, and whether it favors \
+                    smooth motion or time covered, in Settings."
+                ))
+                .on_disabled_hover_text("Downloading an MDposit trajectory…");
+            if running {
+                ui.spinner();
+            }
+
+            if quick.clicked() {
+                let residues = pep
+                    .residues
+                    .iter()
+                    .filter(|res| matches!(res.res_type, ResidueType::AminoAcid(_)))
+                    .count();
+
+                state.volatile.mdposit.quick(
+                    pdb_id.clone(),
+                    residues,
+                    &state.to_save.md,
+                    state.volatile.prefs_dir.clone(),
+                    ui.ctx(),
+                );
+                handle_success(
+                    &mut state.ui,
+                    format!("Finding an MDposit trajectory for {pdb_id}…"),
+                );
             }
         }
 

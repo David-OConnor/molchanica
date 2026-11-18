@@ -1222,6 +1222,8 @@ impl MdPrefs {
         out.extend_from_slice(&self.dt.to_le_bytes());
         out.push(self.backend.to_u8());
         out.extend_from_slice(&self.max_traj_auto_load_gb.to_le_bytes());
+        out.extend_from_slice(&self.quick_traj_target_mb.to_le_bytes());
+        out.push(self.quick_traj_span);
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1254,6 +1256,17 @@ impl MdPrefs {
                 max_traj_auto_load_gb = v;
             }
         }
+        i += 4;
+
+        let mut quick_traj_target_mb = crate::md::mdposit::QUICK_TARGET_MB_DEFAULT;
+        let mut quick_traj_span = crate::md::mdposit::QUICK_SPAN_DEFAULT;
+        if data.len() >= i + 5 {
+            let v = parse_le!(data, u32, i..i + 4);
+            if v > 0 {
+                quick_traj_target_mb = v;
+            }
+            quick_traj_span = data[i + 4].min(100);
+        }
 
         Ok(Self {
             config,
@@ -1261,6 +1274,8 @@ impl MdPrefs {
             dt,
             backend,
             max_traj_auto_load_gb,
+            quick_traj_target_mb,
+            quick_traj_span,
         })
     }
 }

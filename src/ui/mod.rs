@@ -1195,7 +1195,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     handle_scene_flags(state, scene, &mut updates);
     let query_was_pending = state.volatile.thread_receivers.query.is_some();
     handle_thread_rx(state, scene, &mut redraw, &mut updates);
-    mdposit::show(state, ui.ctx());
+    mdposit::show(state, scene, &mut updates, &mut redraw, ui.ctx());
     if query_was_pending && state.volatile.thread_receivers.query.is_none() {
         ui.request_repaint();
     }

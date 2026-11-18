@@ -1,5 +1,5 @@
 use bio_apis::pubchem;
-use bio_files::{FrameSlice, md_params::ForceFieldParams};
+use bio_files::md_params::ForceFieldParams;
 use dynamics::{FfMolType, merge_params};
 use egui::{CollapsingHeader, Color32, Label, RichText, TextEdit, Ui};
 use graphics::{EngineUpdates, Scene};
@@ -17,7 +17,7 @@ use crate::{
     md::{
         trajectory::{
             MAX_FRAMES_TO_ATTEMPT_LOADING, Trajectory, TrajectorySource, close_traj, format_bytes,
-            load_summary, set_viewed, unload_traj,
+            set_viewed, unload_traj, view_traj,
         },
         viewer,
         viewer::ViewerMolSet,
@@ -838,9 +838,10 @@ fn traj_items(
 
     let mut close = None;
     let mut unload = None;
+    // Load from disk.
+    let mut load = None;
+    // Set when viewing an in-memory trajectory.
     let mut snaps_loaded = false;
-    // Set when loading from disk.
-    let mut load_msg = None;
     let mut traj_active = None;
     let mut create_set = false;
     let active_mol_name = md_viewer::set_candidate_name(state);
@@ -916,39 +917,7 @@ fn traj_items(
                 };
 
                 if load_clicked {
-                    let start = (traj.ui_start_i > 0).then_some(traj.ui_start_i);
-                    let end = (traj.ui_end_i + 1 < traj.num_frames).then_some(traj.ui_end_i);
-
-                    match traj.load_snaps(FrameSlice::Index {
-                        start,
-                        end,
-                        step: traj.ui_step,
-                    }) {
-                        Ok(snaps) => {
-                            if let Some(path) = &traj.run_mol_set_path {
-                                md.viewer.mol_set_active = md
-                                    .viewer
-                                    .mol_sets
-                                    .iter()
-                                    .position(|set| set.path.as_ref() == Some(path));
-                            }
-                            load_msg = Some(load_summary(
-                                &snaps,
-                                Some(traj.num_frames),
-                                traj.ui_step.max(1),
-                                None,
-                            ));
-                            md.replace_snaps(snaps);
-                            snaps_loaded = true;
-                            traj_active = Some(i);
-                        }
-                        Err(e) => {
-                            handle_err(
-                                &mut state.ui,
-                                format!("Error loading snapshots from trajectory: {:?}", e),
-                            );
-                        }
-                    }
+                    load = Some(i);
                 }
 
                 if traj.frames_open.is_some()
@@ -1044,6 +1013,16 @@ fn traj_items(
 
     ui.separator();
 
+    if let Some(i) = load {
+        match view_traj(state, i, scene, updates, redraw) {
+            Ok(msg) => handle_success(&mut state.ui, msg),
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Error loading snapshots from trajectory: {e:?}"),
+            ),
+        }
+    }
+
     if let Some(i) = unload {
         unload_traj(state, i, scene, redraw, updates);
     }
@@ -1060,12 +1039,10 @@ fn traj_items(
 
         redraw.set_all();
 
-        let msg = load_msg.unwrap_or_else(|| {
-            format!(
-                "Loaded {} frames into the viewer",
-                state.volatile.md_local.viewer.snapshots.len()
-            )
-        });
+        let msg = format!(
+            "Loaded {} frames into the viewer",
+            state.volatile.md_local.viewer.snapshots.len()
+        );
         handle_success(&mut state.ui, msg);
     }
 

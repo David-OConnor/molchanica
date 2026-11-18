@@ -141,26 +141,25 @@ pub(in crate::ui) fn playback(
     // --- Automatic playback tick (runs each frame while playing) ---
     let mut auto_advance: Option<usize> = None;
 
-    if state.volatile.md_local.viewer.playing {
-        state.volatile.md_local.viewer.playback_accum += state.ui.dt_render as f64;
-        let interval = 1.0 / state.volatile.md_local.viewer.playback_ratio.max(0.1);
+    let viewer = &mut state.volatile.md_local.viewer;
+    if viewer.playing {
+        viewer.playback_accum += state.ui.dt_render as f64;
+        let interval = 1.0 / viewer.playback_ratio.max(0.1);
 
-        if state.volatile.md_local.viewer.playback_accum >= interval {
-            state.volatile.md_local.viewer.playback_accum -= interval;
-            let n = state.volatile.md_local.viewer.snapshots.len();
-            let next = (state.volatile.md_local.viewer.slider_posit_ui + 1) % n;
-            state.volatile.md_local.viewer.slider_posit_ui = next;
-            state.volatile.md_local.viewer.current_snapshot = Some(next);
-            auto_advance = Some(next);
+        if viewer.playback_accum >= interval {
+            viewer.playback_accum -= interval;
+            let next = viewer.slider_posit_ui + 1;
+
+            if next < viewer.snapshots.len() {
+                auto_advance = Some(next);
+            } else if viewer.looping {
+                auto_advance = Some(0);
+            } else {
+                viewer.playing = false;
+                viewer.playback_accum = 0.0;
+            }
         }
         ui.ctx().request_repaint();
-    }
-
-    if let Some(snap_i) = auto_advance {
-        if let Err(e) = state.volatile.md_local.viewer.change_snapshot(snap_i) {
-            handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
-        }
-        viewer::draw_mols(state, scene, updates);
     }
 
     // --- Controls row ---
@@ -183,9 +182,21 @@ pub(in crate::ui) fn playback(
         )
         .clicked()
         {
-            state.volatile.md_local.viewer.playing = !state.volatile.md_local.viewer.playing;
-            state.volatile.md_local.viewer.playback_accum = 0.0;
+            let viewer = &mut state.volatile.md_local.viewer;
+            viewer.playing = !viewer.playing;
+            viewer.playback_accum = 0.0;
+
+            // Playback without looping stops on the last snapshot; start over from there.
+            if viewer.playing && viewer.slider_posit_ui + 1 >= viewer.snapshots.len() {
+                auto_advance = Some(0);
+            }
         }
+
+        ui.checkbox(&mut state.volatile.md_local.viewer.looping, "Loop")
+            .on_hover_text(
+                "Continue playback from the first snapshot after the last. Otherwise, playback \
+                stops at the last snapshot.",
+            );
 
         // Playback speed slider (snapshots per second)
         ui.label("Speed:");
@@ -198,6 +209,19 @@ pub(in crate::ui) fn playback(
             .fixed_decimals(1),
         );
     });
+
+    if let Some(snap_i) = auto_advance
+        && state.volatile.md_local.viewer.mols_and_traj_synced()
+    {
+        let viewer = &mut state.volatile.md_local.viewer;
+        viewer.slider_posit_ui = snap_i;
+        viewer.current_snapshot = Some(snap_i);
+
+        if let Err(e) = viewer.change_snapshot(snap_i) {
+            handle_err(&mut state.ui, format!("Error changing MD snapshot: {e:?}"));
+        }
+        viewer::draw_mols(state, scene, updates);
+    }
 
     // --- Snapshot position slider ---
     // Clear Traj may have emptied the frames.
@@ -979,8 +1003,11 @@ pub(in crate::ui) fn viewer_mol_set(
                 if set_range_overlaps {
                     ui.label(RichText::new("Warning: Mol ranges overlap").color(Color32::LIGHT_RED));
                 }
+            });
 
-                if button!(
+            let max_count = 5;
+            for group in sorted_groups_display.iter().take(max_count) {
+if button!(
             ui,
             "Set",
             COLOR_ACTION,
@@ -1012,10 +1039,6 @@ pub(in crate::ui) fn viewer_mol_set(
                     close = Some(i);
                 }
 
-            });
-
-            let max_count = 5;
-            for group in sorted_groups_display.iter().take(max_count) {
                 ui.horizontal(|ui| {
                     let text = if group.mol_count > 1 {
                         format!(

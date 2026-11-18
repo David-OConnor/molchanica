@@ -240,6 +240,8 @@ pub struct SnapshotViewer {
     pub playback_ratio: f64,
     /// True if the snapshots are incrementing automatically.
     pub playing: bool,
+    /// If true, playback continues from the first snapshot after the last. Otherwise, it stops there.
+    pub looping: bool,
     /// Accumulated real time (seconds) between snapshot advances.
     pub playback_accum: f64,
 }
@@ -254,6 +256,7 @@ impl Default for SnapshotViewer {
             slider_posit_ui: 0,
             playback_ratio: 10.0,
             playing: false,
+            looping: false,
             playback_accum: 0.0,
         }
     }

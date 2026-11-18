@@ -249,6 +249,12 @@ pub struct MdPrefs {
     pub backend: MdBackend,
     /// GB. Trajectories larger than this load with a frame step after runs, and when opening them.
     pub max_traj_auto_load_gb: f32,
+    /// MB. Approximate Quick Traj download size, structure included. Sets how many frames it gets.
+    pub quick_traj_target_mb: u32,
+    /// 0 to 100. How Quick Traj spends its frames: 0 takes consecutive frames from the start,
+    /// for smooth motion; 100 spreads them over the whole simulation, for the broadest sampling.
+    /// Nonlinear; see `mdposit::FramePlan::new`.
+    pub quick_traj_span: u8,
 }
 
 impl Default for MdPrefs {
@@ -259,6 +265,8 @@ impl Default for MdPrefs {
             dt: 0.002,
             backend: Default::default(),
             max_traj_auto_load_gb: crate::md::trajectory::MAX_AUTO_LOAD_GB_DEFAULT,
+            quick_traj_target_mb: crate::md::mdposit::QUICK_TARGET_MB_DEFAULT,
+            quick_traj_span: crate::md::mdposit::QUICK_SPAN_DEFAULT,
         }
     }
 }

@@ -5,7 +5,10 @@ use graphics::{AmbientOcclusion, EngineUpdates, Scene};
 
 use crate::{
     inputs::{MOVEMENT_SENS, ROTATE_SENS, SENS_MOL_MOVE_SCROLL},
-    md::trajectory::MAX_AUTO_LOAD_GB_DEFAULT,
+    md::{
+        mdposit::{QUICK_SPAN_DEFAULT, QUICK_TARGET_MB_DEFAULT},
+        trajectory::MAX_AUTO_LOAD_GB_DEFAULT,
+    },
     prefs::Graphics,
     state::{LabelSizes, MsaaSetting, OperatingMode, State},
     ui::{COL_SPACING, ROW_SPACING, misc::section_box},
@@ -31,6 +34,8 @@ const ROTATION_SENS_RANGE: RangeInclusive<u8> = 1..=200;
 const MOL_MOVE_SENS_RANGE: RangeInclusive<u8> = 1..=200;
 /// GB.
 const MAX_TRAJ_AUTO_LOAD_RANGE: RangeInclusive<f32> = 0.1..=1_024.;
+/// MB.
+const QUICK_TARGET_MB_RANGE: RangeInclusive<u32> = 1..=2_000;
 
 pub(in crate::ui) fn settings(
     state: &mut State,
@@ -313,6 +318,7 @@ fn md_settings(state: &mut State, ui: &mut Ui) {
     let mut changed = false;
     let mut save = false;
 
+    ui.spacing_mut().slider_width = SLIDER_WIDTH;
     let md = &mut state.to_save.md;
 
     settings_grid("md").show(ui, |ui| {
@@ -334,10 +340,43 @@ fn md_settings(state: &mut State, ui: &mut Ui) {
 
         changed |= resp.changed();
         save |= interaction_finished(&resp);
+
+        let help = "Approximate download size for Quick Traj, including the structure. \
+            Larger proteins get fewer frames for the same size.";
+
+        ui.label("Quick Traj target size:").on_hover_text(help);
+        let resp = ui
+            .add(
+                DragValue::new(&mut md.quick_traj_target_mb)
+                    .range(QUICK_TARGET_MB_RANGE)
+                    .suffix(" MB"),
+            )
+            .on_hover_text(help);
+        ui.end_row();
+
+        changed |= resp.changed();
+        save |= interaction_finished(&resp);
+
+        let help = "How Quick Traj spends its frames. Low: consecutive frames from the start of \
+            the simulation, for smooth motion over a short time. High: frames spread across the \
+            whole simulation, for broad sampling that shows which regions are flexible and which \
+            are rigid, with larger jumps between frames. The scale favors smoothness: the middle \
+            keeps frames close together, and the step grows quickly toward the high end.";
+
+        let resp = slider_row(
+            ui,
+            "Quick Traj smooth ↔ range:",
+            help,
+            Slider::new(&mut md.quick_traj_span, 0..=100),
+        );
+        changed |= resp.changed();
+        save |= interaction_finished(&resp);
     });
 
     if reset_button(ui, "Reset MD") {
         md.max_traj_auto_load_gb = MAX_AUTO_LOAD_GB_DEFAULT;
+        md.quick_traj_target_mb = QUICK_TARGET_MB_DEFAULT;
+        md.quick_traj_span = QUICK_SPAN_DEFAULT;
         save = true;
     }
 
