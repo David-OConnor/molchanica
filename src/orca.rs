@@ -5,6 +5,7 @@
 //! [Recommendations for methods, basis sets etc](https://www.faccts.de/docs/orca/6.1/manual/contents/quickstartguide/recommendations.html)
 
 use std::{
+    collections::HashMap,
     fmt::Write as _,
     fs, io,
     path::{Path, PathBuf},
@@ -386,6 +387,9 @@ pub struct OrcaParams {
     pub extra_keywords: String,
     /// Input blocks, e.g. `%scf MaxIter 500 end`, written as-is.
     pub extra_blocks: String,
+    /// `* xyz` rows (element, then x, y, z in Å), or Gaussian-style Z-matrix rows, written in a
+    /// `* gzmt` block. Written as-is.
+    pub geometry: String,
 }
 
 impl Default for OrcaParams {
@@ -423,6 +427,7 @@ impl Default for OrcaParams {
             maxcore_mb: 0,
             extra_keywords: String::new(),
             extra_blocks: String::new(),
+            geometry: String::new(),
         }
     }
 }
@@ -435,8 +440,97 @@ pub fn overridden<'a>(chosen: &'a str, custom: &'a str) -> &'a str {
     }
 }
 
-/// Atoms as ORCA receives them.
-pub type Geometry = [(Element, Vec3)];
+/// Atoms as `* xyz` rows.
+pub fn xyz_rows(atoms: &[(Element, Vec3)]) -> String {
+    atoms
+        .iter()
+        .map(|(element, p)| {
+            format!(
+                "{:<2} {:>14.6} {:>14.6} {:>14.6}",
+                element.to_letter(),
+                p.x,
+                p.y,
+                p.z
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the geometry is a Gaussian-style Z-matrix, i.e. its first atom is an element alone.
+fn is_zmatrix(geometry: &str) -> bool {
+    geometry
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.split_whitespace().count() == 1)
+}
+
+/// A Z-matrix variable row, e.g. `R = 1.075`, as `(name, value)`.
+fn variable_row(row: &str) -> Option<(&str, &str)> {
+    let (name, value) = row.split_once('=')?;
+    let name = name.trim();
+
+    (name.split_whitespace().count() == 1).then(|| (name, value.trim()))
+}
+
+/// The geometry's rows as written to the input: blank and variable rows left out, and variables
+/// replaced with their values, as ORCA doesn't read them.
+fn geometry_rows(geometry: &str) -> Vec<String> {
+    let variables: HashMap<&str, f64> = geometry
+        .lines()
+        .filter_map(variable_row)
+        .filter_map(|(name, value)| Some((name, value.parse().ok()?)))
+        .collect();
+
+    geometry
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && variable_row(line).is_none())
+        .map(|line| {
+            if variables.is_empty() || line.starts_with('#') {
+                return line.to_owned();
+            }
+
+            line.split_whitespace()
+                .enumerate()
+                .map(|(i, word)| {
+                    let (sign, name) = match word.strip_prefix('-') {
+                        Some(name) => (-1., name),
+                        None => (1., word),
+                    };
+                    match variables.get(name) {
+                        Some(value) if i > 0 => (sign * value).to_string(),
+                        _ => word.to_owned(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
+/// Each geometry row's element; `None` where unknown, or for a ghost atom.
+pub fn geometry_elements(geometry: &str) -> Vec<Option<Element>> {
+    geometry
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && variable_row(line).is_none())
+        .map(|line| {
+            let symbol = line.split_whitespace().next().unwrap_or_default();
+            if symbol.contains(':') {
+                return None;
+            }
+
+            let letters: String = symbol
+                .chars()
+                .take_while(char::is_ascii_alphabetic)
+                .collect();
+
+            Element::from_letter(&letters).ok()
+        })
+        .collect()
+}
 
 impl OrcaParams {
     pub fn method(&self) -> &str {
@@ -574,8 +668,13 @@ impl OrcaParams {
         blocks
     }
 
-    /// The complete input. `geometry` of `None` writes a placeholder, for previews.
-    pub fn make_input(&self, geometry: Option<&Geometry>, title: &str) -> String {
+    /// The complete input.
+    pub fn make_input(&self, title: &str) -> String {
+        self.make_input_abridged(title, usize::MAX)
+    }
+
+    /// The input, with geometry rows past `max_atoms` left out.
+    pub fn make_input_abridged(&self, title: &str, max_atoms: usize) -> String {
         let mut text = format!("# {title}\n# Written by Molchanica\n");
 
         for line in self.keyword_lines() {
@@ -592,24 +691,27 @@ impl OrcaParams {
             }
         }
 
-        let _ = writeln!(text, "\n* xyz {} {}", self.charge, self.multiplicity.max(1));
-        match geometry {
-            Some(atoms) => {
-                for (element, posit) in atoms {
-                    let _ = writeln!(
-                        text,
-                        "  {:<2} {:>14.6} {:>14.6} {:>14.6}",
-                        element.to_letter(),
-                        posit.x,
-                        posit.y,
-                        posit.z
-                    );
-                }
-            }
-            None => text.push_str("  …the active molecule's atoms…\n"),
+        let coords = if is_zmatrix(&self.geometry) {
+            "gzmt"
+        } else {
+            "xyz"
+        };
+        let _ = writeln!(
+            text,
+            "\n* {coords} {} {}",
+            self.charge,
+            self.multiplicity.max(1)
+        );
+        let mut rows = geometry_rows(&self.geometry).into_iter();
+        for row in rows.by_ref().take(max_atoms) {
+            let _ = writeln!(text, "  {row}");
         }
-        text.push('*');
-        text.push('\n');
+
+        let rest = rows.count();
+        if rest > 0 {
+            let _ = writeln!(text, "  # …and {rest} more atoms");
+        }
+        text.push_str("*\n");
 
         text
     }
@@ -776,9 +878,10 @@ pub struct OrcaJob {
 }
 
 impl OrcaJob {
-    pub fn from_params(params: &OrcaParams, geometry: &Geometry, target: MolTarget) -> Self {
+    /// `target`: the molecule the geometry came from, if it still matches it.
+    pub fn from_params(params: &OrcaParams, title: &str, target: Option<MolTarget>) -> Self {
         Self {
-            input: params.make_input(Some(geometry), &target.ident),
+            input: params.make_input(title),
             mode: "parameters",
             summary: json!({
                 "task": params.task.label(),
@@ -788,8 +891,8 @@ impl OrcaJob {
                 "multiplicity": params.multiplicity,
             }),
             geometry_file: params.geometry_file(),
-            activity: format!("{} of {}", params.task.label().to_lowercase(), target.ident),
-            target: Some(target),
+            activity: format!("{} of {title}", params.task.label().to_lowercase()),
+            target,
         }
     }
 

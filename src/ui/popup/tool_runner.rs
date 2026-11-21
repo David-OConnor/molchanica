@@ -56,6 +56,9 @@ use crate::{
 /// Outputs larger than this are not previewed inline.
 const MAX_PREVIEW_BYTES: u64 = 2_000_000;
 
+/// Taller errors scroll, so a run's output can't crowd out the form.
+const ERROR_MAX_HEIGHT: f32 = 160.;
+
 /// PCI vendor ID, as `AdapterInfo::vendor` reports it.
 const NVIDIA_VENDOR_ID: u32 = 0x10DE;
 
@@ -1602,6 +1605,7 @@ impl ToolWindow {
         let quantum_chem::orca::FormEvent {
             pick_file,
             make_text,
+            use_active_mol,
         } = event;
 
         if pick_file {
@@ -1612,11 +1616,14 @@ impl ToolWindow {
         if make_text {
             self.request = Some(QcRequest::OrcaText);
         }
+        if use_active_mol {
+            self.request = Some(QcRequest::OrcaGeometry);
+        }
 
         // See `draw`.
         let mut footer = ui.new_child(UiBuilder::new().max_rect(ui.available_rect_before_wrap()));
         let installed = external_tools::is_installed(Tool::Orca);
-        let not_ready = self.orca.not_ready(self.active_mol.as_ref());
+        let not_ready = self.orca.not_ready();
 
         footer.horizontal(|ui| {
             let blocker = if remote {
@@ -1686,10 +1693,33 @@ impl ToolWindow {
         }
     }
 
-    /// The error and status message, if any.
+    /// The error and status message, if any. A multi-line error, e.g. a failed run's output, scrolls
+    /// within a capped height, starting at its end, where the cause usually is.
     fn status_ui(&self, ui: &mut Ui) {
         if let Some(error) = &self.error {
-            ui.colored_label(Color32::LIGHT_RED, error);
+            match error.split_once('\n') {
+                Some((first, rest)) => {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(Color32::LIGHT_RED, first);
+                        if ui.small_button("Copy").clicked() {
+                            ui.ctx().copy_text(error.clone());
+                        }
+                    });
+
+                    // Salted with the length, so a new error starts scrolled to its end.
+                    ScrollArea::vertical()
+                        .id_salt(("tool_error", error.len()))
+                        .max_height(ERROR_MAX_HEIGHT)
+                        .auto_shrink([false, true])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(rest).monospace().color(Color32::LIGHT_RED));
+                        });
+                }
+                None => {
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                }
+            }
         }
         if let Some(message) = &self.message {
             ui.label(message);

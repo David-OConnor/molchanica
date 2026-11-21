@@ -5,9 +5,7 @@ pub(super) mod orca;
 
 use std::{
     collections::HashMap,
-    fs,
-    hash::{DefaultHasher, Hash, Hasher},
-    io,
+    fs, io,
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
@@ -34,7 +32,7 @@ use super::{
 };
 use crate::{
     external_tools::{self, Tool, remote::ComputeTarget, tool_form::FormField},
-    orca::{Choice, MolTarget, OrcaJob, electron_count, overridden, read_xyz_positions},
+    orca::{Choice, MolTarget, OrcaJob, overridden, read_xyz_positions, xyz_rows},
     state::State,
     ui::{COL_SPACING, COLOR_AMBER},
     util::{RedrawFlags, handle_err, handle_success},
@@ -47,7 +45,9 @@ const BACKENDS: [Tool; 2] = [Tool::Psi4, Tool::Orca];
 pub(super) enum QcRequest {
     /// Put the active molecule's atoms in the Psi4 geometry.
     Psi4Geometry,
-    /// Write the ORCA input text from its parameters and the active molecule.
+    /// Put the active molecule's atoms in the ORCA geometry.
+    OrcaGeometry,
+    /// Write the ORCA input text from its parameters.
     OrcaText,
     OrcaRun,
     Apply(QcApply),
@@ -119,7 +119,6 @@ pub(super) fn window(
 
     let active = active_mol(state);
     state.ui.tool_windows.quantum_chem().active_mol = active;
-    refresh_orca_preview(state);
     tool_window(state, ToolWindowKind::QuantumChemistry, scene, updates, ui);
 
     if let Some(request) = state.ui.tool_windows.quantum_chem().take_request() {
@@ -159,57 +158,6 @@ fn active_geometry(state: &State) -> Option<(MolTarget, Vec<(Element, Vec3)>)> {
     Some((target, geometry))
 }
 
-/// Changes when the active molecule, or its atoms, do.
-fn geometry_fingerprint(state: &State) -> Option<u64> {
-    let (mol_type, index) = state.volatile.active_mol?;
-    let mol = state.get_mol(mol_type, index)?;
-    let common = mol.common();
-
-    let mut hasher = DefaultHasher::new();
-    (index, &common.ident).hash(&mut hasher);
-    for (element, posit) in atom_positions(common) {
-        (
-            element,
-            posit.x.to_bits(),
-            posit.y.to_bits(),
-            posit.z.to_bits(),
-        )
-            .hash(&mut hasher);
-    }
-
-    Some(hasher.finish())
-}
-
-/// Remake the ORCA input preview if its parameters, or the active molecule, changed.
-fn refresh_orca_preview(state: &mut State) {
-    let window = state.ui.tool_windows.quantum_chem();
-    if window.tool() != Tool::Orca || window.orca.mode != orca::InputMode::Parameters {
-        return;
-    }
-
-    let fingerprint = geometry_fingerprint(state);
-    if !state
-        .ui
-        .tool_windows
-        .quantum_chem()
-        .orca
-        .preview_stale(fingerprint)
-    {
-        return;
-    }
-
-    let geometry = active_geometry(state);
-    let geometry = geometry
-        .as_ref()
-        .map(|(target, atoms)| (target.ident.as_str(), atoms.as_slice()));
-    state
-        .ui
-        .tool_windows
-        .quantum_chem()
-        .orca
-        .update_preview(geometry, fingerprint);
-}
-
 fn active_mol(state: &State) -> Option<orca::ActiveMol> {
     let mol = state.active_mol()?;
     let common = mol.common();
@@ -224,63 +172,47 @@ fn active_mol(state: &State) -> Option<orca::ActiveMol> {
     Some(orca::ActiveMol {
         name: common.name.clone().unwrap_or_else(|| common.ident.clone()),
         atom_count: atoms.len(),
-        electrons: electron_count(atoms.iter().map(|atom| atom.element)),
         charge_sum,
-        has_hydrogens: atoms.iter().any(|atom| atom.element == Element::Hydrogen),
     })
 }
 
 fn handle_request(state: &mut State, request: QcRequest, redraw: &mut RedrawFlags, ui: &Ui) {
     let geometry = match request {
-        QcRequest::Apply(_) => None,
-        _ => active_geometry(state),
+        QcRequest::Psi4Geometry | QcRequest::OrcaGeometry => active_geometry(state),
+        _ => None,
     };
     let computations = &state.volatile.ongoing_computations;
     let window = state.ui.tool_windows.quantum_chem();
 
     match request {
-        QcRequest::Psi4Geometry => match geometry {
-            Some((target, atoms)) => {
-                let coordinates = atoms
-                    .iter()
-                    .map(|(element, p)| {
-                        format!(
-                            "{:<2} {:>14.6} {:>14.6} {:>14.6}",
-                            element.to_letter(),
-                            p.x,
-                            p.y,
-                            p.z
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                window.set_psi4_geometry(coordinates, &target.ident);
-            }
-            None => window.set_error("No active molecule. Select one first.".to_owned()),
-        },
-        QcRequest::OrcaText => {
-            let text = match &geometry {
-                Some((target, atoms)) => window.orca.params.make_input(Some(atoms), &target.ident),
-                None => window.orca.params.make_input(None, "Molecule"),
+        QcRequest::Psi4Geometry | QcRequest::OrcaGeometry => {
+            let Some((target, atoms)) = geometry else {
+                window.set_error("No active molecule. Select one first.".to_owned());
+                return;
             };
-            window.orca.set_text_from_params(text);
 
-            if geometry.is_none() {
-                window.set_error(
-                    "No active molecule. Add atoms between the * lines, or select a molecule \
-                    and write the input again."
-                        .to_owned(),
-                );
+            let rows = xyz_rows(&atoms);
+            if matches!(request, QcRequest::Psi4Geometry) {
+                window.set_psi4_geometry(rows, &target.ident);
+            } else {
+                let charge_sum = window.active_mol.as_ref().and_then(|mol| mol.charge_sum);
+                window.orca.set_geometry(rows, target, charge_sum);
             }
         }
+        QcRequest::OrcaText => {
+            let text = window.orca.params.make_input(window.orca.title());
+            window.orca.set_text_from_params(text);
+        }
         QcRequest::OrcaRun => {
-            let form = &window.orca;
+            let form = &mut window.orca;
+            form.refresh();
+
             let job = match form.mode {
-                orca::InputMode::Parameters => match geometry {
-                    Some((target, atoms)) => Ok(OrcaJob::from_params(&form.params, &atoms, target)),
-                    None => Err("No active molecule. Select one first.".to_owned()),
-                },
+                orca::InputMode::Parameters => Ok(OrcaJob::from_params(
+                    &form.params,
+                    form.title(),
+                    form.target().cloned(),
+                )),
                 orca::InputMode::Text => Ok(OrcaJob::from_text(form.text.clone(), "text")),
                 orca::InputMode::Upload => fs::read_to_string(form.input_file.trim())
                     .map(|text| OrcaJob::from_text(text, "upload"))
@@ -738,6 +670,7 @@ const fn c(
 
 #[rustfmt::skip]
 const PSI4_METHODS: &[Choice] = &[
+    c("scf", "SCF", "Hartree–Fock", "HF, or DFT if dft_functional is set."),
     c("hf", "HF", "Hartree–Fock", "No electron correlation."),
     c("hf3c", "HF-3c", "Composite (built-in basis)", "Set the basis to none."),
     c("pbeh3c", "PBEh-3c", "Composite (built-in basis)", "Set the basis to none."),

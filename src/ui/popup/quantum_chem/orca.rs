@@ -5,17 +5,19 @@ use std::path::{Path, PathBuf};
 
 use bio_files::orca::basis_sets::BasisSet;
 use egui::{
-    CollapsingHeader, Color32, ComboBox, DragValue, Grid, RichText, ScrollArea, TextEdit, Ui,
+    Button, CollapsingHeader, Color32, ComboBox, DragValue, Grid, RichText, ScrollArea, TextEdit,
+    Ui,
 };
 use egui_file_dialog::{FileDialogConfig, Filter};
+use na_seq::Element;
 use serde_json::Value;
 
 use super::{InputPreview, QcApply, choice_override, input_preview_ui, override_box};
 use crate::{
     orca::{
-        AuxBasis, BASIS_CATEGORIES, ChargeScheme, DftGrid, Dispersion, FreqKind, Geometry, METHODS,
+        AuxBasis, BASIS_CATEGORIES, ChargeScheme, DftGrid, Dispersion, FreqKind, METHODS,
         MdThermostat, MolTarget, OPT_THRESHOLDS, OrcaParams, OrcaTask, Reference, RiApprox,
-        SOLVENTS, ScfAid, ScfConv, Solvation,
+        SOLVENTS, ScfAid, ScfConv, Solvation, electron_count, geometry_elements,
     },
     ui::{
         COLOR_ACTION, COLOR_AMBER, ROW_SPACING,
@@ -49,11 +51,16 @@ impl InputMode {
 pub(in crate::ui::popup) struct ActiveMol {
     pub name: String,
     pub atom_count: usize,
-    /// Of the neutral molecule, where every element is known.
-    pub electrons: Option<i64>,
     /// The sum of the atoms' partial charges, where every atom has one.
     pub charge_sum: Option<f32>,
-    pub has_hydrogens: bool,
+}
+
+/// The molecule the geometry was taken from.
+struct GeometrySource {
+    target: MolTarget,
+    /// Its rows' elements; the geometry is still this molecule's while they match.
+    elements: Vec<Option<Element>>,
+    charge_sum: Option<f32>,
 }
 
 /// The ORCA form's state.
@@ -70,16 +77,19 @@ pub(in crate::ui::popup) struct OrcaForm {
     text_source: Option<OrcaParams>,
     /// The input the parameters make, shown above them.
     pub preview: InputPreview,
-    /// The parameters and geometry fingerprint the preview was made from.
-    preview_source: Option<(OrcaParams, Option<u64>)>,
+    /// The parameters the preview was made from.
+    preview_source: Option<OrcaParams>,
+    /// The geometry rows' elements, as of the preview.
+    elements: Vec<Option<Element>>,
+    geometry_source: Option<GeometrySource>,
 }
 
 impl OrcaForm {
     /// Why Run is unavailable, if it is.
-    pub fn not_ready(&self, active: Option<&ActiveMol>) -> Option<&'static str> {
+    pub fn not_ready(&self) -> Option<&'static str> {
         match self.mode {
-            InputMode::Parameters if active.is_none() => {
-                Some("Select a molecule to run on; it's the active molecule that ORCA receives.")
+            InputMode::Parameters if self.params.geometry.trim().is_empty() => {
+                Some("Enter a geometry, or use the active molecule.")
             }
             InputMode::Text if self.text.trim().is_empty() => Some("Enter an ORCA input."),
             InputMode::Upload if self.input_file.trim().is_empty() => {
@@ -95,36 +105,49 @@ impl OrcaForm {
         self.text_source = Some(self.params.clone());
     }
 
-    /// Whether the preview is out of date with the parameters, or the active molecule's geometry.
-    pub fn preview_stale(&self, fingerprint: Option<u64>) -> bool {
-        self.preview_source
-            .as_ref()
-            .is_none_or(|(params, source)| *params != self.params || *source != fingerprint)
+    /// Replace the geometry with a molecule's atoms.
+    pub fn set_geometry(&mut self, rows: String, target: MolTarget, charge_sum: Option<f32>) {
+        self.geometry_source = Some(GeometrySource {
+            target,
+            elements: geometry_elements(&rows),
+            charge_sum,
+        });
+        self.params.geometry = rows;
+        // The title may change with the geometry unchanged.
+        self.preview_source = None;
     }
 
-    /// Remake the preview. Very large molecules are cut short, as previewing every atom would be
-    /// slow to draw.
-    pub fn update_preview(
-        &mut self,
-        geometry: Option<(&str, &Geometry)>,
-        fingerprint: Option<u64>,
-    ) {
-        let text = match geometry {
-            Some((title, atoms)) if atoms.len() > PREVIEW_MAX_ATOMS => {
-                let text = self
-                    .params
-                    .make_input(Some(&atoms[..PREVIEW_MAX_ATOMS]), title);
-                let end = text.trim_end().len() - 1;
-                let rest = atoms.len() - PREVIEW_MAX_ATOMS;
+    /// Where the geometry came from, while its elements still match.
+    fn source(&self) -> Option<&GeometrySource> {
+        self.geometry_source
+            .as_ref()
+            .filter(|source| source.elements == self.elements)
+    }
 
-                format!("{}  # …and {rest} more atoms\n*\n", &text[..end])
-            }
-            Some((title, atoms)) => self.params.make_input(Some(atoms), title),
-            None => self.params.make_input(None, "Molecule"),
-        };
+    /// The molecule to apply results to.
+    pub fn target(&self) -> Option<&MolTarget> {
+        self.source().map(|source| &source.target)
+    }
+
+    /// The input's title: the molecule the geometry came from.
+    pub fn title(&self) -> &str {
+        self.target().map_or("Molecule", |target| &target.ident)
+    }
+
+    /// Remake the preview, and reread the geometry, if the parameters changed. Very large molecules
+    /// are cut short, as previewing every atom would be slow to draw.
+    pub fn refresh(&mut self) {
+        if self.preview_source.as_ref() == Some(&self.params) {
+            return;
+        }
+
+        self.elements = geometry_elements(&self.params.geometry);
+        let text = self
+            .params
+            .make_input_abridged(self.title(), PREVIEW_MAX_ATOMS);
 
         self.preview.set(text);
-        self.preview_source = Some((self.params.clone(), fingerprint));
+        self.preview_source = Some(self.params.clone());
     }
 }
 
@@ -135,8 +158,10 @@ const PREVIEW_MAX_ATOMS: usize = 300;
 #[derive(Default)]
 pub(in crate::ui::popup) struct FormEvent {
     pub pick_file: bool,
-    /// Write the input text from the parameters and the active molecule.
+    /// Write the input text from the parameters.
     pub make_text: bool,
+    /// Replace the geometry with the active molecule's.
+    pub use_active_mol: bool,
 }
 
 /// The input mode selector, and the selected mode's inputs.
@@ -171,6 +196,16 @@ pub(in crate::ui::popup) fn form_ui(
 
     match form.mode {
         InputMode::Parameters => {
+            form.refresh();
+
+            // Start from the active molecule, once there is one.
+            if form.params.geometry.trim().is_empty()
+                && form.geometry_source.is_none()
+                && active.is_some()
+            {
+                event.use_active_mol = true;
+            }
+
             let top = ui.min_rect().bottom();
             input_preview_ui(
                 &form.preview,
@@ -184,7 +219,11 @@ pub(in crate::ui::popup) fn form_ui(
                 .id_salt("orca_form_scroll")
                 .max_height(height)
                 .auto_shrink([true, false])
-                .show(ui, |ui| parameters_ui(&mut form.params, active, ui));
+                .show(ui, |ui| {
+                    if parameters_ui(form, active, ui) {
+                        event.use_active_mol = true;
+                    }
+                });
         }
         InputMode::Text => {
             ui.horizontal(|ui| {
@@ -193,7 +232,7 @@ pub(in crate::ui::popup) fn form_ui(
                     .button("Write from parameters")
                     .on_hover_text(
                         "Replace this text with an input made from the Set parameters here \
-                        settings and the active molecule.",
+                        settings.",
                     )
                     .clicked()
                 {
@@ -281,31 +320,79 @@ macro_rules! keyword_combo {
 
 const DOCS: &str = "https://www.faccts.de/docs/orca/6.1/manual/contents";
 
-fn parameters_ui(params: &mut OrcaParams, active: Option<&ActiveMol>, ui: &mut Ui) {
+const GEOMETRY_HELP: &str = "One atom per row: element, then x, y, z in Å. Or a Gaussian-style \
+    Z-matrix (first row the element alone), written as * gzmt. For other coordinate formats, use \
+    Enter input.";
+
+/// Returns whether "Use active molecule" was clicked.
+fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -> bool {
+    let mut use_active_mol = false;
+
+    let atom_count = form.elements.len();
+    let has_hydrogens = form.elements.contains(&Some(Element::Hydrogen));
+    let electrons = form
+        .elements
+        .iter()
+        .copied()
+        .collect::<Option<Vec<_>>>()
+        .and_then(electron_count);
+    let source = form
+        .source()
+        .map(|source| (source.target.ident.clone(), source.charge_sum));
+    let params = &mut form.params;
+
     heading("Molecule", "", ui, |ui| {
-        match active {
-            Some(mol) => {
-                ui.label(
-                    RichText::new(format!("{} · {} atoms", mol.name, mol.atom_count))
-                        .color(Color32::WHITE),
+        ui.horizontal(|ui| {
+            ui.label("Molecular geometry").on_hover_text(GEOMETRY_HELP);
+
+            let hover = active.map_or_else(String::new, |mol| {
+                format!(
+                    "Replace the geometry with {}'s {} atoms.",
+                    mol.name, mol.atom_count
                 )
-                .on_hover_text("ORCA runs on the active molecule's current atom positions.");
-                if !mol.has_hydrogens && mol.atom_count > 1 {
-                    ui.colored_label(COLOR_AMBER, "No hydrogens. Add them before running.");
-                }
-                if mol.atom_count > 150 {
-                    ui.colored_label(
-                        COLOR_AMBER,
-                        "Large for QM; consider xTB, a composite method, or a smaller model.",
-                    );
-                }
+            });
+            if ui
+                .add_enabled(active.is_some(), Button::new("Use active molecule"))
+                .on_hover_text(hover)
+                .on_disabled_hover_text("No active molecule. Select one first.")
+                .clicked()
+            {
+                use_active_mol = true;
             }
-            None => {
-                ui.colored_label(
-                    Color32::LIGHT_RED,
-                    "No active molecule. Select one; ORCA runs on it.",
+        });
+
+        ScrollArea::vertical()
+            .id_salt("orca_geometry_scroll")
+            .max_height(200.)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.add(
+                    TextEdit::multiline(&mut params.geometry)
+                        .code_editor()
+                        .hint_text(
+                            "O    0.000000    0.000000    0.117300\n\
+                             H    0.000000    0.757200   -0.469200\n\
+                             H    0.000000   -0.757200   -0.469200",
+                        )
+                        .desired_rows(8)
+                        .desired_width(f32::INFINITY),
                 );
-            }
+            });
+
+        let summary = match &source {
+            Some((ident, _)) => format!("{atom_count} atoms, from {ident}"),
+            None => format!("{atom_count} atoms"),
+        };
+        ui.label(RichText::new(summary).small());
+
+        if !has_hydrogens && atom_count > 1 {
+            ui.colored_label(COLOR_AMBER, "No hydrogens. Add them before running.");
+        }
+        if atom_count > 150 {
+            ui.colored_label(
+                COLOR_AMBER,
+                "Large for QM; consider xTB, a composite method, or a smaller model.",
+            );
         }
 
         ui.horizontal(|ui| {
@@ -316,7 +403,7 @@ fn parameters_ui(params: &mut OrcaParams, active: Option<&ActiveMol>, ui: &mut U
                 .on_hover_text("2S + 1. 1 for closed shells, 2 for one unpaired electron.");
             ui.add(DragValue::new(&mut params.multiplicity).range(1..=11));
 
-            if let Some(sum) = active.and_then(|mol| mol.charge_sum) {
+            if let Some(sum) = source.as_ref().and_then(|(_, sum)| *sum) {
                 let rounded = sum.round() as i32;
                 if rounded != params.charge
                     && ui
@@ -548,9 +635,11 @@ fn parameters_ui(params: &mut OrcaParams, active: Option<&ActiveMol>, ui: &mut U
         },
     );
 
-    for warning in params.warnings(active.and_then(|mol| mol.electrons)) {
+    for warning in params.warnings(electrons) {
         ui.colored_label(COLOR_AMBER, warning);
     }
+
+    use_active_mol
 }
 
 /// Options that only apply to some tasks.
