@@ -9,7 +9,7 @@ use crate::{
         mdposit::{QUICK_SPAN_DEFAULT, QUICK_TARGET_MB_DEFAULT},
         trajectory::MAX_AUTO_LOAD_GB_DEFAULT,
     },
-    prefs::Graphics,
+    prefs::{DEFAULT_FLOOR_GRID_SPACING, Graphics},
     state::{LabelSizes, MsaaSetting, OperatingMode, State},
     ui::{COL_SPACING, ROW_SPACING, misc::section_box},
     util::RedrawFlags,
@@ -133,6 +133,8 @@ fn graphics_settings(state: &mut State, ui: &mut Ui, updates: &mut EngineUpdates
 
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     let gr = &mut state.to_save.graphics;
+    let grid_spacing = &mut state.to_save.ui_prefs.floor_grid_spacing;
+    let old_grid_spacing = *grid_spacing;
 
     settings_grid("graphics").show(ui, |ui| {
         let msaa_prev = gr.msaa;
@@ -197,6 +199,11 @@ fn graphics_settings(state: &mut State, ui: &mut Ui, updates: &mut EngineUpdates
         changed |= resp.changed();
         save |= interaction_finished(&resp);
 
+        ui.label("Floor grid spacing (Å)");
+        let resp = ui.add(DragValue::new(grid_spacing).range(1..=u8::MAX));
+        ui.end_row();
+        save |= interaction_finished(&resp);
+
         {
             let mut val = gr.edge_cueing.unwrap_or_default();
             let resp = slider_row(
@@ -234,6 +241,7 @@ fn graphics_settings(state: &mut State, ui: &mut Ui, updates: &mut EngineUpdates
 
     if reset_button(ui, "Reset graphics") {
         *gr = Graphics::default();
+        *grid_spacing = DEFAULT_FLOOR_GRID_SPACING;
         // Let MSAA follow the GPU again: `apply_msaa_gpu_default` re-runs on the next frame.
         state.volatile.msaa_gpu_default_applied = false;
 
@@ -245,13 +253,14 @@ fn graphics_settings(state: &mut State, ui: &mut Ui, updates: &mut EngineUpdates
         // Re-derive the engine settings from the prefs, rather than mirroring each control into
         // `graphics_settings` as it changes: `to_engine` is the one place that mapping lives.
         state.graphics_settings = state.to_save.graphics.to_engine();
+        updates.graphics_settings = Some(state.graphics_settings.clone());
+    }
 
+    if changed || *grid_spacing != old_grid_spacing {
         // Mark prefs dirty rather than writing them: `check_prefs_save` flushes within
         // PREFS_SAVE_INTERVAL. This is the backstop for changes that never finish an
         // interaction, such as nudging a slider with the arrow keys and then walking away.
         state.to_save.save_flag = true;
-        // Triggers a graphics re-init
-        updates.graphics_settings = Some(state.graphics_settings.clone());
     }
 
     if save {

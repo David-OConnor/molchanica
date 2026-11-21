@@ -64,10 +64,11 @@ pub(crate) fn cam_controls(
     }
 
     if ui
-        .button(RichText::new("Floor").color(misc::active_color(state.ui.floor.is_some())))
+        .button(RichText::new("Floor").color(misc::active_color(state.to_save.ui_prefs.floor_visible)))
         .on_hover_text(
-            "Show a floor with molecule shadows and X (red) and Z (blue) axes through the origin. \
-            Its height is set from the open molecules when enabled.",
+            "Toggle display of a flat surface \"below\" the molecules. This provides an absolute visual \
+            reference, which may be helpful when positioning molecules relative to each other, and moving the \
+            camera."
         )
         .clicked()
     {

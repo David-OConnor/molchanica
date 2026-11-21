@@ -662,6 +662,10 @@ pub(crate) fn finish_session_restore(
     draw_all_lipids(state, scene, updates);
     draw_all_pockets(state, scene, updates);
 
+    if state.to_save.ui_prefs.floor_visible && state.ui.floor.is_none() {
+        state.ui.floor = Some(crate::drawing::floor::Floor::fit(state));
+    }
+
     set_flashlight(scene);
     updates.lighting = true;
 }

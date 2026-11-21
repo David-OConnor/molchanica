@@ -41,13 +41,15 @@ pub const MESH_PEP_SOLVENT_SURFACE: usize = 6; // Van Der Waals surface.
 pub const MESH_DENSITY_SURFACE: usize = 8;
 pub const MESH_SECONDARY_STRUCTURE: usize = 9; // Active peptide ribbon.
 pub const MESH_OTHER_RIBBONS: usize = 10; // Combined ribbons for other open peptides.
-// Keep these in this order, so the axes draw over the floor.
+// Draw the floor, then the grid, then the axes.
 pub const MESH_FLOOR: usize = 11;
-pub const MESH_FLOOR_AXIS_X: usize = 12;
-pub const MESH_FLOOR_AXIS_Z: usize = 13;
+pub const MESH_FLOOR_GRID_X: usize = 12;
+pub const MESH_FLOOR_GRID_Z: usize = 13;
+pub const MESH_FLOOR_AXIS_X: usize = 14;
+pub const MESH_FLOOR_AXIS_Z: usize = 15;
 
 // We support an arbitrary number of pockets.
-pub const MESH_POCKET_START: usize = 14;
+pub const MESH_POCKET_START: usize = 16;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 
@@ -219,6 +221,8 @@ pub fn render(state: State) {
             Mesh::new_box(1., 1., 1.), // Placeholder for secondary structure surface; populated later.
             Mesh::default(),           // Ribbons for other open peptides.
             floor::mesh_disc(),
+            floor::mesh_grid_line(true),
+            floor::mesh_grid_line(false),
             floor::mesh_axis(true),
             floor::mesh_axis(false),
             // No placeholder for pockets; we add them as required.

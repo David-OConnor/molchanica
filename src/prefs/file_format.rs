@@ -44,8 +44,8 @@ use crate::{
     external_tools::remote::ComputeTarget,
     md::MdBackend,
     prefs::{
-        ControlSchemeType, ControlSettings, DepthMode, Graphics, MdPrefs, OpenHistory, OpenType,
-        PerMolToSave, ToSave, UiPrefs,
+        ControlSchemeType, ControlSettings, DEFAULT_FLOOR_GRID_SPACING, DepthMode, Graphics,
+        MdPrefs, OpenHistory, OpenType, PerMolToSave, ToSave, UiPrefs,
     },
     selection::{Selection, ViewSelLevel},
     state::{
@@ -1324,6 +1324,9 @@ impl UiPrefs {
         ] {
             out.extend_from_slice(&size.to_le_bytes());
         }
+        out.push(self.floor_visible as u8);
+        out.push(self.floor_grid_spacing);
+
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1372,6 +1375,8 @@ impl UiPrefs {
 
         // Absent in prefs files written before label sizes were configurable; keep the defaults.
         let mut label_sizes = LabelSizes::default();
+        let mut floor_visible = false;
+        let mut floor_grid_spacing = DEFAULT_FLOOR_GRID_SPACING;
         if i + 20 <= data.len() {
             let sizes = &mut label_sizes;
             for size in [
@@ -1388,6 +1393,13 @@ impl UiPrefs {
                     *size = v.clamp(LabelSizes::MIN, LabelSizes::MAX);
                 }
             }
+
+            floor_visible = data.get(i).is_some_and(|&v| v != 0);
+            floor_grid_spacing = data
+                .get(i + 1)
+                .copied()
+                .filter(|&spacing| spacing != 0)
+                .unwrap_or(DEFAULT_FLOOR_GRID_SPACING);
         }
 
         Ok(Self {
@@ -1401,6 +1413,8 @@ impl UiPrefs {
             dist_filter,
             nearby_dist_thresh,
             label_sizes,
+            floor_visible,
+            floor_grid_spacing,
         })
     }
 }

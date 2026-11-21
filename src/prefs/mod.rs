@@ -41,6 +41,7 @@ use crate::{
 };
 
 pub const DEFAULT_PREFS_FILE: &str = "molchanica_prefs.mca";
+pub const DEFAULT_FLOOR_GRID_SPACING: u8 = 5;
 
 // Dirty preferences are written at this interval. UI interactions and asynchronous
 // state updates set ToSave::save_flag instead of cloning and comparing the full state.
@@ -286,6 +287,9 @@ pub struct UiPrefs {
     pub dist_filter: DistFilter,
     pub nearby_dist_thresh: u16,
     pub label_sizes: LabelSizes,
+    pub floor_visible: bool,
+    /// Å between floor grid lines.
+    pub floor_grid_spacing: u8,
 }
 
 impl Default for UiPrefs {
@@ -302,6 +306,8 @@ impl Default for UiPrefs {
             visibility: Default::default(),
             ui_visibility: Default::default(),
             label_sizes: Default::default(),
+            floor_visible: false,
+            floor_grid_spacing: DEFAULT_FLOOR_GRID_SPACING,
         }
     }
 }

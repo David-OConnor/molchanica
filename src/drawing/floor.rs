@@ -1,5 +1,4 @@
-//! An optional floor below the scene, with X (red) and Z (blue) axis lines through the origin. Gives
-//! an absolute spatial reference.
+//! An optional floor below the scene, with an XZ grid and red X and blue Z axes.
 //!
 //! The floor is a disc centered under the camera, fading out before the far clip plane, so it
 //! appears infinite. It's transparent, so atoms below it remain visible. Visible molecular
@@ -11,7 +10,9 @@ use lin_alg::f32::{Quaternion, Vec3};
 use crate::{
     cam::RENDER_DIST_FAR,
     drawing::EntityClass,
-    render::{MESH_FLOOR, MESH_FLOOR_AXIS_X, MESH_FLOOR_AXIS_Z},
+    render::{
+        MESH_FLOOR, MESH_FLOOR_AXIS_X, MESH_FLOOR_AXIS_Z, MESH_FLOOR_GRID_X, MESH_FLOOR_GRID_Z,
+    },
     state::{OperatingMode, State},
 };
 
@@ -33,6 +34,7 @@ const FADE_START: f32 = 0.1;
 const RINGS: usize = 32;
 const SEGMENTS: usize = 96;
 const AXIS_SEGMENTS: usize = 64;
+const GRID_SEGMENTS: usize = 16;
 
 /// Re-center when the camera moves this far.
 const RECENTER_STEP: f32 = 10.;
@@ -41,6 +43,14 @@ const RECENTER_STEP: f32 = 10.;
 const AXIS_WIDTH_RATIO: f32 = 0.0025;
 const AXIS_WIDTH_MIN: f32 = 0.2;
 const AXIS_WIDTH_STEP: f32 = 0.05;
+
+/// Grid line width as a fraction of the axis width.
+const GRID_WIDTH_RATIO: f32 = 0.2;
+/// Grid line opacity before fading, from 1 to 255.
+const GRID_ALPHA: u8 = 50;
+
+// Separate the depth-writing layers, including at the far end of the floor.
+const LAYER_OFFSET_RATIO: f32 = 0.0025;
 
 const MARGIN_BELOW: f32 = 5.;
 /// Height snaps to multiples of this.
@@ -70,19 +80,24 @@ struct Placement {
     center_x: f32,
     center_z: f32,
     axis_width: f32,
+    layer_offset: f32,
+    grid_spacing: u8,
 }
 
 impl Placement {
-    fn new(y: f32, cam: &Camera) -> Self {
+    fn new(y: f32, cam: &Camera, grid_spacing: u8) -> Self {
         let snap = |v: f32, step: f32| (v / step).round() * step;
 
         let p = cam.position;
-        let width = ((p.y - y).abs() * AXIS_WIDTH_RATIO).max(AXIS_WIDTH_MIN);
+        let height = p.y - y;
+        let width = (height.abs() * AXIS_WIDTH_RATIO).max(AXIS_WIDTH_MIN);
 
         Self {
             center_x: snap(p.x, RECENTER_STEP),
             center_z: snap(p.z, RECENTER_STEP),
             axis_width: snap(width, AXIS_WIDTH_STEP),
+            layer_offset: height * LAYER_OFFSET_RATIO,
+            grid_spacing: grid_spacing.max(1),
         }
     }
 }
@@ -121,14 +136,19 @@ impl Floor {
             ent.scale_partial = Some(scale);
             ent.opacity = ENTITY_OPACITY;
             ent.class = CLASS;
+
             ent
         }
 
-        // Axis half-length, so its fade ends at the disc's edge.
+        // Clip each line to the disc.
         let half_len = |offset: f32| (RADIUS.powi(2) - offset.powi(2)).max(0.).sqrt();
+        let spacing = f32::from(pl.grid_spacing);
+        let steps = (RADIUS / spacing).ceil() as i32;
+        let grid_width = (pl.axis_width * GRID_WIDTH_RATIO).min(spacing * 0.25);
 
-        // Mesh order draws the axes over the disc; transparent entities don't write depth.
-        vec![
+        // Each layer sits slightly closer to the camera than the one drawn before it.
+        let mut entities = Vec::with_capacity(3 + 2 * (2 * steps + 1) as usize);
+        entities.extend([
             ent(
                 MESH_FLOOR,
                 Vec3::new(pl.center_x, self.y, pl.center_z),
@@ -136,15 +156,55 @@ impl Floor {
             ),
             ent(
                 MESH_FLOOR_AXIS_X,
-                Vec3::new(pl.center_x, self.y, 0.),
+                Vec3::new(pl.center_x, self.y + 3. * pl.layer_offset, 0.),
                 Vec3::new(half_len(pl.center_z), 1., pl.axis_width),
             ),
             ent(
                 MESH_FLOOR_AXIS_Z,
-                Vec3::new(0., self.y, pl.center_z),
+                Vec3::new(0., self.y + 4. * pl.layer_offset, pl.center_z),
                 Vec3::new(pl.axis_width, 1., half_len(pl.center_x)),
             ),
-        ]
+        ]);
+
+        for (mesh, along_x, across_center, y) in [
+            (
+                MESH_FLOOR_GRID_X,
+                true,
+                pl.center_z,
+                self.y + pl.layer_offset,
+            ),
+            (
+                MESH_FLOOR_GRID_Z,
+                false,
+                pl.center_x,
+                self.y + 2. * pl.layer_offset,
+            ),
+        ] {
+            let nearest_step = (across_center / spacing).round();
+
+            for step in -steps..=steps {
+                let across = (nearest_step + step as f32) * spacing;
+                let line_half_len = half_len(across - across_center);
+
+                // Keep the instance count stable as the camera pans. The axis occupies zero.
+                let width = if across == 0. { 0. } else { grid_width };
+                let (position, scale) = if along_x {
+                    (
+                        Vec3::new(pl.center_x, y, across),
+                        Vec3::new(line_half_len, 1., width),
+                    )
+                } else {
+                    (
+                        Vec3::new(across, y, pl.center_z),
+                        Vec3::new(width, 1., line_half_len),
+                    )
+                };
+
+                entities.push(ent(mesh, position, scale));
+            }
+        }
+
+        entities
     }
 }
 
@@ -194,11 +254,25 @@ pub fn mesh_disc() -> Mesh {
 
 /// A unit-width strip in the XZ plane, facing +Y, running from -1 to 1 along X or Z.
 pub fn mesh_axis(along_x: bool) -> Mesh {
-    let color = if along_x { COLOR_X_AXIS } else { COLOR_Z_AXIS };
+    mesh_line(along_x, axis_color(along_x), AXIS_SEGMENTS)
+}
 
-    let mut vertices = Vec::with_capacity((AXIS_SEGMENTS + 1) * 2);
-    for i in 0..=AXIS_SEGMENTS {
-        let along = i as f32 / AXIS_SEGMENTS as f32 * 2. - 1.;
+pub fn mesh_grid_line(along_x: bool) -> Mesh {
+    let (r, g, b, _) = axis_color(along_x);
+    let (fr, fg, fb, _) = COLOR_FLOOR;
+    let color = (r.midpoint(fr), g.midpoint(fg), b.midpoint(fb), GRID_ALPHA);
+
+    mesh_line(along_x, color, GRID_SEGMENTS)
+}
+
+fn axis_color(along_x: bool) -> Rgba {
+    if along_x { COLOR_X_AXIS } else { COLOR_Z_AXIS }
+}
+
+fn mesh_line(along_x: bool, color: Rgba, segments: usize) -> Mesh {
+    let mut vertices = Vec::with_capacity((segments + 1) * 2);
+    for i in 0..=segments {
+        let along = i as f32 / segments as f32 * 2. - 1.;
 
         for across in [-0.5, 0.5] {
             let (x, z) = if along_x {
@@ -210,8 +284,8 @@ pub fn mesh_axis(along_x: bool) -> Mesh {
         }
     }
 
-    let mut indices = Vec::with_capacity(AXIS_SEGMENTS * 6);
-    for i in 0..AXIS_SEGMENTS {
+    let mut indices = Vec::with_capacity(segments * 6);
+    for i in 0..segments {
         let a = i * 2;
         let (b, c, d) = (a + 2, a + 3, a + 1);
         // Keep the winding facing +Y for both orientations.
@@ -268,18 +342,27 @@ fn sample_posits(state: &State) -> Box<dyn Iterator<Item = Vec3> + '_> {
     Box::new(peptides.chain(others).map(|p| (*p).into()))
 }
 
+fn remove_entities(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
+    let len_before = scene.entities.len();
+    scene.entities.retain(|ent| ent.class != CLASS);
+
+    if scene.entities.len() != len_before {
+        crate::util::clear_mol_entity_indices(state, None);
+        updates.entities = EntityUpdate::All;
+    }
+}
+
 /// Show or hide the floor. When showing, fit its height to the current molecules.
 pub fn toggle(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    if state.ui.floor.take().is_some() {
-        scene.floor_shadows = None;
-        let len_before = scene.entities.len();
-        scene.entities.retain(|ent| ent.class != CLASS);
+    let visible = !state.to_save.ui_prefs.floor_visible;
+    state.to_save.ui_prefs.floor_visible = visible;
+    state.to_save.save_flag = true;
 
-        // Removal shifts later entities.
-        if scene.entities.len() != len_before {
-            crate::util::clear_mol_entity_indices(state, None);
-            updates.entities = EntityUpdate::All;
-        }
+    if !visible {
+        state.ui.floor = None;
+        scene.floor_shadows = None;
+        remove_entities(state, scene, updates);
+
         return;
     }
 
@@ -303,14 +386,25 @@ pub fn update(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates)
     shadows.y = floor.y;
     shadows.strength = state.to_save.graphics.floor_shadow_strength;
 
-    let placement = Placement::new(floor.y, &scene.camera);
+    let placement = Placement::new(
+        floor.y,
+        &scene.camera,
+        state.to_save.ui_prefs.floor_grid_spacing,
+    );
     let rebuilding = matches!(updates.entities, EntityUpdate::All);
     if !rebuilding && floor.placed == Some(placement) {
         return;
     }
 
+    let spacing_changed = floor
+        .placed
+        .is_some_and(|pl| pl.grid_spacing != placement.grid_spacing);
     let new = floor.entities(placement);
     floor.placed = Some(placement);
+
+    if spacing_changed {
+        remove_entities(state, scene, updates);
+    }
 
     let mut found = false;
     let existing = scene.entities.iter_mut().filter(|e| e.class == CLASS);
