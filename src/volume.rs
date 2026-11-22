@@ -11,7 +11,7 @@ use bincode::{Decode, Encode};
 use bio_files::{AtomGeneric, bond_inference::create_bonds};
 pub(crate) use cube::is_cube;
 use cube::{Cube, Kind};
-use egui::{Color32, ComboBox, DragValue, RichText, Ui};
+use egui::{Color32, ComboBox, DragValue, RichText, Slider, SliderClamping, Ui};
 use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Mesh, Scene, UP_VEC, Vertex};
 use lin_alg::f32::{Quaternion, Vec3};
 use mcubes::{MarchingCubes, MeshSide};
@@ -55,7 +55,7 @@ impl SavedVolume {
             Some(density) => (density, Some(source)),
             None => (source, None),
         };
-        let contour = default_contour(&grid, 0);
+        let contour = default_contour(grid.kind, contour_peak(&grid, 0));
 
         Ok(Self {
             path: path.to_owned(),
@@ -158,19 +158,22 @@ fn matching_density(path: &Path, potential: &Cube) -> Option<Cube> {
     None
 }
 
-fn default_contour(grid: &Cube, dataset: usize) -> f32 {
-    let recommended = match grid.kind {
+fn contour_peak(grid: &Cube, dataset: usize) -> f32 {
+    grid.datasets[dataset]
+        .values
+        .iter()
+        .map(|v| v.abs())
+        .fold(0., f32::max)
+}
+
+fn default_contour(kind: Kind, peak: f32) -> f32 {
+    let recommended = match kind {
         Kind::Density => 0.001,
         Kind::Orbital | Kind::Potential => 0.03,
         Kind::Spin | Kind::Scalar => 0.005,
     };
-    let max = grid.datasets[dataset]
-        .values
-        .iter()
-        .map(|v| v.abs())
-        .fold(0., f32::max);
-    if max > 0. && max <= recommended {
-        return (max * 0.25).max(f32::MIN_POSITIVE);
+    if peak > 0. && peak <= recommended {
+        return (peak * 0.25).max(f32::MIN_POSITIVE);
     }
 
     recommended
@@ -180,16 +183,19 @@ struct Volume {
     view: SavedVolume,
     mesh: Option<Mesh>,
     atoms: Vec<Entity>,
+    contour_peak: f32,
 }
 
 impl Volume {
     fn new(view: SavedVolume) -> Self {
         let atoms = atom_entities(&view.grid);
+        let contour_peak = contour_peak(&view.grid, view.dataset);
 
         Self {
             view,
             mesh: None,
             atoms,
+            contour_peak,
         }
     }
 }
@@ -369,7 +375,7 @@ pub(crate) fn sidebar(
                 }
             });
             if active {
-                let (update, remesh) = settings_ui(view, ui);
+                let (update, remesh) = settings_ui(view, &mut volume.contour_peak, ui);
                 changed |= update || remesh;
                 if remesh {
                     volume.mesh = None;
@@ -386,7 +392,7 @@ pub(crate) fn sidebar(
     }
 }
 
-fn settings_ui(view: &mut SavedVolume, ui: &mut Ui) -> (bool, bool) {
+fn settings_ui(view: &mut SavedVolume, peak: &mut f32, ui: &mut Ui) -> (bool, bool) {
     let mut update = false;
     let mut remesh = false;
     ui.indent("cube_settings", |ui| {
@@ -401,29 +407,40 @@ fn settings_ui(view: &mut SavedVolume, ui: &mut Ui) -> (bool, bool) {
                     }
                 });
             if view.dataset != previous {
-                view.contour = default_contour(&view.grid, view.dataset);
+                *peak = contour_peak(&view.grid, view.dataset);
+                view.contour = default_contour(view.grid.kind, *peak);
                 remesh = true;
             }
         }
         ui.horizontal(|ui| {
-            ui.label("Contour")
-                .on_hover_text("Isovalue in the Cube file's units");
-            let speed = (view.contour * 0.02).max(0.000_001);
-            remesh |= ui
+            let default = default_contour(view.grid.kind, *peak);
+            let min = (default * 0.01).max(f32::MIN_POSITIVE);
+            let max = peak.max(2. * default);
+            let previous = view.contour;
+            if ui
                 .add(
-                    DragValue::new(&mut view.contour)
-                        .speed(speed)
-                        .range(f32::MIN_POSITIVE..=f32::MAX)
+                    Slider::new(&mut view.contour, min..=max)
+                        .text("Contour")
+                        .logarithmic(true)
+                        .clamping(SliderClamping::Never)
                         .max_decimals(8),
                 )
-                .changed();
+                .on_hover_text("Isovalue in the Cube file's units")
+                .changed()
+            {
+                if view.contour.is_finite() && view.contour > 0. {
+                    remesh = true;
+                } else {
+                    view.contour = previous;
+                }
+            }
             if ui.small_button("Reset").clicked() {
-                view.contour = default_contour(&view.grid, view.dataset);
+                view.contour = default;
                 remesh = true;
             }
         });
         update |= ui
-            .add(egui::Slider::new(&mut view.opacity, 0.08..=1.).text("Opacity"))
+            .add(Slider::new(&mut view.opacity, 0.08..=1.).text("Opacity"))
             .changed();
         if !view.grid.atoms.is_empty() {
             update |= ui
