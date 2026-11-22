@@ -140,6 +140,28 @@ pub(crate) fn add_cube_fields(contract: &mut FormContract) -> Result<(), String>
     Ok(())
 }
 
+pub(crate) fn uses_basis(values: &HashMap<String, String>) -> bool {
+    let Some(method) = values.get("method") else {
+        return true;
+    };
+    let method = method.trim().to_ascii_lowercase();
+
+    !method.contains('/')
+        && !matches!(
+            method.as_str(),
+            "hf3c"
+                | "hf-3c"
+                | "pbeh3c"
+                | "pbeh-3c"
+                | "b973c"
+                | "b97-3c"
+                | "r2scan3c"
+                | "r2scan-3c"
+                | "wb97x3c"
+                | "wb97x-3c"
+        )
+}
+
 pub(crate) fn wants_cubes(values: &HashMap<String, String>) -> bool {
     ["cube_density", "cube_esp", "cube_frontier"]
         .iter()
@@ -174,9 +196,13 @@ pub(super) fn coordinator() -> io::Result<CommandSpec> {
 
 /// Convert editable input modes through the same parser and writer as bio_web.
 pub(crate) fn project(
-    values: &HashMap<String, String>,
+    mut values: HashMap<String, String>,
     target: &str,
 ) -> io::Result<HashMap<String, String>> {
+    if target == "text" && !uses_basis(&values) {
+        values.remove("basis");
+    }
+
     let mut python = python()?;
     if !Path::new(&python.program).is_file() {
         python = CommandSpec::new(if cfg!(windows) { "python" } else { "python3" }).arg("-I");

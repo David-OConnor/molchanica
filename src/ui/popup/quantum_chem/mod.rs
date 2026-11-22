@@ -414,7 +414,7 @@ impl Psi4Preview {
                 self.receiver = Some(receiver);
 
                 thread::spawn(move || {
-                    let _ = sender.send(external_tools::psi4::project(&values, "text"));
+                    let _ = sender.send(external_tools::psi4::project(values, "text"));
                     ctx.request_repaint();
                 });
             }
@@ -672,10 +672,10 @@ const fn c(
 const PSI4_METHODS: &[Choice] = &[
     c("scf", "SCF", "Hartree–Fock", "HF, or DFT if dft_functional is set."),
     c("hf", "HF", "Hartree–Fock", "No electron correlation."),
-    c("hf3c", "HF-3c", "Composite (built-in basis)", "Set the basis to none."),
-    c("pbeh3c", "PBEh-3c", "Composite (built-in basis)", "Set the basis to none."),
-    c("r2scan3c", "r2SCAN-3c", "Composite (built-in basis)", "Set the basis to none."),
-    c("b973c", "B97-3c", "Composite (built-in basis)", "Set the basis to none."),
+    c("hf3c", "HF-3c", "Composite (built-in basis)", "Low-cost Hartree–Fock composite for geometries of large molecules."),
+    c("pbeh3c", "PBEh-3c", "Composite (built-in basis)", "Hybrid DFT composite for geometries and noncovalent interactions."),
+    c("r2scan3c", "r2SCAN-3c", "Composite (built-in basis)", "Meta-GGA composite. A robust, fast default for geometries and energies."),
+    c("b973c", "B97-3c", "Composite (built-in basis)", "Low-cost GGA composite for geometries and noncovalent interactions."),
     c("blyp", "BLYP", "GGA", ""),
     c("bp86", "BP86", "GGA", ""),
     c("pbe", "PBE", "GGA", ""),
@@ -704,23 +704,23 @@ const PSI4_METHODS: &[Choice] = &[
     c("b2plyp-d3bj", "B2PLYP-D3(BJ)", "Double hybrid", "Includes D3 dispersion."),
     c("dsd-pbep86", "DSD-PBEP86", "Double hybrid", ""),
     c("pwpb95", "PWPB95", "Double hybrid", ""),
-    c("mp2", "MP2", "Wavefunction", ""),
-    c("scs-mp2", "SCS-MP2", "Wavefunction", ""),
-    c("mp2.5", "MP2.5", "Wavefunction", ""),
-    c("mp3", "MP3", "Wavefunction", ""),
+    c("mp2", "MP2", "Wavefunction", "Second-order perturbation theory for electron correlation."),
+    c("scs-mp2", "SCS-MP2", "Wavefunction", "Scales same-spin and opposite-spin MP2 correlation separately."),
+    c("mp2.5", "MP2.5", "Wavefunction", "Averages MP2 and MP3 energies."),
+    c("mp3", "MP3", "Wavefunction", "Third-order perturbation theory for electron correlation."),
     c("omp2", "OMP2", "Wavefunction", "Orbital-optimized MP2."),
-    c("cisd", "CISD", "Wavefunction", ""),
-    c("ccsd", "CCSD", "Wavefunction", "Small molecules only."),
-    c("ccsd(t)", "CCSD(T)", "Wavefunction", "Small molecules only."),
+    c("cisd", "CISD", "Wavefunction", "Configuration interaction with single and double excitations."),
+    c("ccsd", "CCSD", "Wavefunction", "Coupled cluster with single and double excitations."),
+    c("ccsd(t)", "CCSD(T)", "Wavefunction", "CCSD with perturbative triples. A benchmark for single-reference systems."),
     c("fno-ccsd(t)", "FNO-CCSD(T)", "Wavefunction", "CCSD(T) with frozen natural orbitals; cheaper."),
     c("eom-ccsd", "EOM-CCSD", "Wavefunction", "Excited states. Set roots_per_irrep in Additional options."),
-    c("sapt0", "SAPT0", "SAPT (two fragments)", "Interaction energy. Separate the fragments with -- in the geometry."),
-    c("sapt2+", "SAPT2+", "SAPT (two fragments)", "Interaction energy. Separate the fragments with -- in the geometry."),
+    c("sapt0", "SAPT0", "SAPT (two fragments)", "Low-cost interaction energy decomposition. Separate the fragments with -- in the geometry."),
+    c("sapt2+", "SAPT2+", "SAPT (two fragments)", "Higher-order interaction energy decomposition. Separate the fragments with -- in the geometry."),
 ];
 
 #[rustfmt::skip]
 const PSI4_BASES: &[Choice] = &[
-    c("", "None", "", "The method includes its basis, e.g. a 3c method."),
+    c("", "None", "", "Leave the global basis unset."),
     c("sto-3g", "STO-3G", "Pople", ""),
     c("3-21g", "3-21G", "Pople", ""),
     c("6-31g", "6-31G", "Pople", ""),

@@ -66,11 +66,16 @@ pub fn payload(
     let contract = FormContract::load(slug(tool)).map_err(io::Error::other)?;
     let mut result = Map::new();
     let task = values.get("task").map(String::as_str).unwrap_or("");
+    let uses_basis = tool != Tool::Psi4 || super::psi4::uses_basis(values);
 
     for field in &contract.fields {
         if field.managed_by_runner || !field.applies_to(mode) || !field.applies_to_task(task) {
             continue;
         }
+        if field.name == "basis" && !uses_basis {
+            continue;
+        }
+
         let value = if let Some(contents) = file_contents.get(&field.name) {
             contents.clone()
         } else {

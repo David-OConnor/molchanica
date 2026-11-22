@@ -1540,7 +1540,7 @@ impl ToolWindow {
                 Some("converting input".into()),
             );
             self.start_job(ui, JobAction::ProjectInput, computation, move || {
-                let result = external_tools::psi4::project(&values, &target).map(|projected| {
+                let result = external_tools::psi4::project(values, &target).map(|projected| {
                     target_values.extend(projected);
 
                     target_values
@@ -1582,7 +1582,7 @@ impl ToolWindow {
                     self.start_job(ui, JobAction::Run, computation, move || {
                         let result = (|| {
                             if let Some(values) = psi4_cube_values {
-                                let mut projected = external_tools::psi4::project(&values, "text")?;
+                                let mut projected = external_tools::psi4::project(values, "text")?;
                                 let input = projected.remove("psi4_input").ok_or_else(|| {
                                     io::Error::other("The Psi4 input converter returned no input")
                                 })?;
@@ -2654,6 +2654,12 @@ fn draw_field(
         ui.label(RichText::new(format!("{}: {}", field.label, field.help_note)).weak());
         return;
     }
+
+    if tool == Tool::Psi4 && field.name == "basis" && !external_tools::psi4::uses_basis(values) {
+        ui.label(RichText::new("This method specifies its basis set.").small());
+        return;
+    }
+
     let value = values.entry(field.name.clone()).or_default();
     let label = format!("{}{}", field.label, if field.required { " *" } else { "" });
 

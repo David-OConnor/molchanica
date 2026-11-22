@@ -12,7 +12,9 @@ use std::{
 
 use bio_apis::{amber_geostd, chebi, pubchem::find_cids_from_search, uniprot};
 use bio_files::MmCif;
-use egui::{Color32, FontId, Response, RichText, TextEdit, TextFormat, Ui, text::LayoutJob};
+use egui::{
+    Button, Color32, FontId, RichText, TextEdit, TextFormat, TextWrapMode, Ui, text::LayoutJob,
+};
 use graphics::{EngineUpdates, Scene};
 use mol_defs::{
     molecules::{MolIdent, MolType, MoleculeGeneric, PeptideIdent, small::MoleculeSmall},
@@ -941,17 +943,6 @@ fn enter_target(inp: &str, inp_l: &str) -> EnterTarget {
     EnterTarget::None
 }
 
-/// Draws one of the query bar's remote-lookup buttons, highlighting it if Enter would activate it.
-/// Only one button in the bar is ever the Enter target.
-fn query_btn(ui: &mut Ui, text: &str, is_enter_target: bool) -> Response {
-    let text = RichText::new(text);
-
-    ui.button(match is_enter_target {
-        true => text.color(COLOR_HIGHLIGHT),
-        false => text,
-    })
-}
-
 /// Apply an already-downloaded ChEBI structure on the UI thread. Shared with the Rhea popup's
 /// background downloads so identifiers, managed files, history, and rendering stay consistent.
 pub(in crate::ui) fn open_chebi_download(
@@ -1302,6 +1293,22 @@ pub(in crate::ui) fn load_mol_from_query(
     inp_l: &str,
     enter_pressed: bool,
 ) {
+    let query_enabled = state.volatile.thread_receivers.query.is_none();
+    let enter_pressed = enter_pressed && query_enabled;
+
+    // Add buttons directly to the toolbar so they can wrap to a new row.
+    let query_btn = |ui: &mut Ui, text: &str, is_enter_target: bool| {
+        let text = RichText::new(text);
+        let text = if is_enter_target {
+            text.color(COLOR_HIGHLIGHT)
+        } else {
+            text
+        };
+        let button = Button::new(text).wrap_mode(TextWrapMode::Extend);
+
+        ui.add_enabled(query_enabled, button)
+    };
+
     // Molecules we ship with the application. Checked ahead of the remote databases below, since
     // these load instantly and without an internet connection, and Enter picks the best local match
     // over any of them. Matches are still drawn as buttons, so a remote lookup stays one click away.

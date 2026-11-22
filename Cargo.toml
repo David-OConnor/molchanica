@@ -38,7 +38,7 @@ mol_defs = { version = "0.1.1", features = ["render"] }
 # ADME and synthesis are private, unpublished crates. Cargo requires path deps to exist even when
 # optional, so these stay commented out. Uncomment locally to build with `--features adme,synthesis`.
 #adme = { path = "../adme", optional = true }
-#synthesis = { path = "../synthesis", optional = true }
+synthesis = { path = "../synthesis", optional = true }
 
 # Checking for, downloading, and installing new releases, from the About popup. Without its
 # default `gui` feature, which is the Software Manager application itself.
@@ -114,7 +114,7 @@ winresource = "0.1"
 # We feature-gate the CUDA dependency, so this program can be run on computers that don't have a
 # suitable graphics chip.
 [features]
-default = ["cuda"]
+default = ["cuda", "synthesis"]
 
 #cuda = ["cuda_setup", "cudarc", "lin_alg/cuda", "dynamics/cuda", "dynamics/vkfft", "ewald/vkfft"]
 cuda = ["cuda_setup", "cudarc", "nvml-wrapper", "lin_alg/cuda", "dynamics/cuda", "dynamics/cufft", "ewald/cufft"]

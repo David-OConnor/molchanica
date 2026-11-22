@@ -1329,9 +1329,7 @@ fn query_input(
             && edit_resp.lost_focus()
             && ui.input(|i| i.key_pressed(Key::Enter));
 
-        ui.add_enabled_ui(!query_loading, |ui| {
-            load_mol_from_query(state, ui, &input_trimmed, &input_lowercase, enter_pressed);
-        });
+        load_mol_from_query(state, ui, &input_trimmed, &input_lowercase, enter_pressed);
     }
 
     if state.ui.db_input.is_empty() {
