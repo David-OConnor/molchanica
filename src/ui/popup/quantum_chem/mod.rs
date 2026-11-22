@@ -829,6 +829,15 @@ pub(super) fn output_name(path: &Path) -> Option<&'static str> {
         return Some("Final geometry (XYZ)");
     }
 
+    match path.file_name()?.to_str()? {
+        "Dt.cube" => return Some("Total electron density (Cube)"),
+        "Ds.cube" => return Some("Spin density (Cube)"),
+        "Da.cube" => return Some("Alpha electron density (Cube)"),
+        "Db.cube" => return Some("Beta electron density (Cube)"),
+        "ESP.cube" => return Some("Electrostatic potential (Cube)"),
+        _ => {}
+    }
+
     match output_path(path)? {
         ("summary", "summary.json") => Some("Calculation summary (JSON)"),
         ("summary", "frequencies.csv") => Some("Vibrational modes (CSV)"),

@@ -34,6 +34,7 @@ mod sfc_mesh;
 mod split_join;
 mod ui;
 mod util;
+mod volume;
 
 mod cli;
 mod rdkit_smiles;

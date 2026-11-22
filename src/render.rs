@@ -47,9 +47,10 @@ pub const MESH_FLOOR_GRID_X: usize = 12;
 pub const MESH_FLOOR_GRID_Z: usize = 13;
 pub const MESH_FLOOR_AXIS_X: usize = 14;
 pub const MESH_FLOOR_AXIS_Z: usize = 15;
+pub const MESH_VOLUME: usize = 16;
 
 // We support an arbitrary number of pockets.
-pub const MESH_POCKET_START: usize = 16;
+pub const MESH_POCKET_START: usize = 17;
 
 // pub const SHELL_OPACITY: f32 = 0.01;
 
@@ -225,8 +226,9 @@ pub fn render(state: State) {
             floor::mesh_grid_line(false),
             floor::mesh_axis(true),
             floor::mesh_axis(false),
-            // No placeholder for pockets; we add them as required.
-            // Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
+            Mesh::default(), // Cube isosurfaces.
+                             // No placeholder for pockets; we add them as required.
+                             // Mesh::new_box(1., 1., 1.), // Placeholder for pocket; populated later.
         ],
         entities: Vec::new(),
         gaussians: Vec::new(),

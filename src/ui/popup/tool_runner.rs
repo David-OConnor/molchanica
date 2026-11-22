@@ -307,7 +307,11 @@ struct Form {
 impl Form {
     fn new(tool: Tool) -> Result<Self, String> {
         let slug = shared_adapter::slug(tool);
-        let contract = FormContract::load(slug)?;
+        let mut contract = FormContract::load(slug)?;
+        if tool == Tool::Psi4 {
+            external_tools::psi4::add_cube_fields(&mut contract)?;
+        }
+
         let upload_format = contract
             .field("input_format")
             .map(FormField::default_text)
@@ -1510,6 +1514,11 @@ impl ToolWindow {
 
         let tool = self.tool;
         let payload = run.then(|| form.run_payload(tool, proteins));
+        let psi4_cube_values = (run
+            && tool == Tool::Psi4
+            && form.mode == "parameters"
+            && external_tools::psi4::wants_cubes(&form.values))
+        .then(|| form.values.clone());
 
         if project_input {
             let target = form.mode.clone();
@@ -1555,7 +1564,7 @@ impl ToolWindow {
         if let Some(payload) = payload {
             match payload {
                 Err(error) => self.error = Some(error.to_string()),
-                Ok(payload) => {
+                Ok(mut payload) => {
                     let comp_type = match kind {
                         ToolWindowKind::QuantumChemistry => ComputationType::QuantumMechanics,
                         _ => ComputationType::MachineLearning,
@@ -1571,11 +1580,22 @@ impl ToolWindow {
 
                     self.control = Some(control.clone());
                     self.start_job(ui, JobAction::Run, computation, move || {
-                        let result = if remote {
-                            remote::run(tool, payload, token, &control)
-                        } else {
-                            shared_adapter::run(tool, payload, &control)
-                        };
+                        let result = (|| {
+                            if let Some(values) = psi4_cube_values {
+                                let mut projected = external_tools::psi4::project(&values, "text")?;
+                                let input = projected.remove("psi4_input").ok_or_else(|| {
+                                    io::Error::other("The Psi4 input converter returned no input")
+                                })?;
+                                payload["input_mode"] = json!("text");
+                                payload["psi4_input"] = json!(input);
+                            }
+
+                            if remote {
+                                remote::run(tool, payload, token, &control)
+                            } else {
+                                shared_adapter::run(tool, payload, &control)
+                            }
+                        })();
 
                         JobResult::Run(result.map_err(|error| error.to_string()))
                     });
@@ -2004,6 +2024,14 @@ impl ToolWindow {
         lists.show(ui, "tool_result_files", 180.0, |ui| {
             for path in &result.files {
                 ui.horizontal(|ui| {
+                    if matches!(tool, Tool::Psi4 | Tool::Orca)
+                        && crate::volume::is_cube(path)
+                        && ui
+                            .button(RichText::new("Open in viewer").color(COLOR_ACTION))
+                            .clicked()
+                    {
+                        load = Some(path.clone());
+                    }
                     if output_category(path) == Some(DataCategory::Structure)
                         && ui
                             .button(RichText::new("Load structure").color(COLOR_ACTION))

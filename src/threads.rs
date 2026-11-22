@@ -395,6 +395,12 @@ fn apply_session_restore_item(
             }
         }
         SessionRestorePayload::Density(density) => state.load_density(density),
+        SessionRestorePayload::Cube(cube) => {
+            let index = state.volumes.push(cube);
+            if state.volatile.active_mol.is_none() && state.volatile.active_seq.is_none() {
+                state.volumes.active = Some(index);
+            }
+        }
         SessionRestorePayload::GeneralForceField(params) => {
             state.ff_param_set.amber_mut().unwrap().small_mol = Some(params);
         }

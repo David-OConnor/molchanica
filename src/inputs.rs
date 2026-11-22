@@ -861,6 +861,7 @@ fn handle_physical_key(
                     } else {
                         // No selection: deactivate the molecule.
                         state.volatile.active_mol = None;
+                        state.volumes.active = None;
                     }
 
                     redraw.set_all();
@@ -964,6 +965,8 @@ fn handle_physical_key(
                             // Close the active mol?
                             if let Some((mol_type, i)) = state.volatile.active_mol {
                                 close_mol(mol_type, i, state, scene, redraw, updates);
+                            } else if let Some(i) = state.volumes.active {
+                                crate::volume::close(state, scene, i);
                             }
                         }
                         OperatingMode::MolEditor => {

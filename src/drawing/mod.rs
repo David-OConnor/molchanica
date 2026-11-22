@@ -294,6 +294,7 @@ pub enum EntityClass {
     Representation = 14,
     SelectionHighlight = 15,
     Floor = 16,
+    Volume = 17,
     Other = 99,
 }
 

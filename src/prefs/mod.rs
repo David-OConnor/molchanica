@@ -73,6 +73,7 @@ pub enum OpenType {
     MdMols,
     /// DNA, RNA, or protein sequences, e.g. FASTA or GenBank. One file may hold several.
     Sequence,
+    Cube,
 }
 
 impl Display for OpenType {
@@ -91,6 +92,7 @@ impl Display for OpenType {
             Self::ParquetDb => "Parquet DB",
             Self::MdMols => "MD Mols",
             Self::Sequence => "Seq",
+            Self::Cube => "Cube map",
         };
         write!(f, "{v}")
     }

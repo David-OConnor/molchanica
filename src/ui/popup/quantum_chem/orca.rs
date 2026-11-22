@@ -91,6 +91,7 @@ impl OrcaForm {
             InputMode::Parameters if self.params.geometry.trim().is_empty() => {
                 Some("Enter a geometry, or use the active molecule.")
             }
+            InputMode::Parameters => self.params.plot_error(),
             InputMode::Text if self.text.trim().is_empty() => Some("Enter an ORCA input."),
             InputMode::Upload if self.input_file.trim().is_empty() => {
                 Some("Choose an ORCA input file.")
@@ -609,6 +610,39 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
     });
 
     heading(
+        "Plots",
+        &format!("{DOCS}/utilitiesvisualization/plots.html"),
+        ui,
+        |ui| {
+            let plots = &mut params.plots;
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut plots.density, "Electron density");
+                ui.checkbox(&mut plots.esp, "Electrostatic potential")
+                    .on_hover_text("Requires ORCA 6.1 or later. Also exports the matching electron density cube.");
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Alpha orbitals");
+                ui.add(
+                    TextEdit::singleline(&mut plots.alpha)
+                        .hint_text("0, 1")
+                        .desired_width(105.),
+                );
+                ui.label("Beta orbitals");
+                ui.add(
+                    TextEdit::singleline(&mut plots.beta)
+                        .hint_text("Unrestricted only")
+                        .desired_width(105.),
+                );
+            });
+            ui.small("Orbital indices start at 0 and match the ORCA output table.");
+            ui.horizontal(|ui| {
+                ui.label("Grid points per axis");
+                ui.add(DragValue::new(&mut plots.grid_points).range(8..=160));
+            });
+        },
+    );
+
+    heading(
         "Additional input",
         &format!("{DOCS}/essentialelements/input.html"),
         ui,
@@ -637,6 +671,9 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
 
     for warning in params.warnings(electrons) {
         ui.colored_label(COLOR_AMBER, warning);
+    }
+    if let Some(error) = params.plot_error() {
+        ui.colored_label(COLOR_AMBER, error);
     }
 
     use_active_mol
@@ -772,6 +809,9 @@ pub(in crate::ui::popup) fn output_name(path: &Path) -> Option<&'static str> {
         "input.engrad" => "Energy and gradient",
         "input.property.txt" => "Properties",
         "input.gbw" => "Wavefunction (GBW)",
+        "electron-density.cube" => "Electron density (Cube)",
+        "input.scfp.esp.cube" => "Electrostatic potential (Cube)",
+        "esp-plot.log" => "Electrostatic potential plot log",
         _ => return None,
     })
 }
@@ -800,6 +840,9 @@ pub(in crate::ui::popup) fn summary_ui(
     let target = MolTarget::from_json(&details["molecule"]);
 
     ui.strong("ORCA calculation");
+    if let Some(warning) = details["plot_warning"].as_str() {
+        ui.colored_label(COLOR_AMBER, warning);
+    }
     let summary = &details["summary"];
     ui.horizontal_wrapped(|ui| {
         if let Some(task) = summary["task"].as_str() {

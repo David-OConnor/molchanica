@@ -73,6 +73,29 @@ pub mod ff_params;
 pub(crate) mod managed_mols;
 pub mod sequence;
 
+fn complete_small_molecule_hydrogens(mol: &mut MoleculeCommon) {
+    // Some 2D Molfiles include only stereochemical hydrogens. GAFF2 needs the rest.
+    let has_hydrogens = mol.atoms.iter().any(|a| a.element == Element::Hydrogen);
+    // A valence deficit on an unmarked heteroatom can indicate charge.
+    let missing_carbon_h = mol
+        .atoms
+        .iter()
+        .enumerate()
+        .any(|(i, a)| a.element == Element::Carbon && bonds_avail(i, mol, a.element) > 0);
+
+    if !has_hydrogens || missing_carbon_h {
+        println!("Small molecule {} missing hydrogens; adding.", mol.ident);
+        mol.populate_hydrogens();
+    } else if mol.atoms.iter().any(|a| a.explicit_valence.is_some()) {
+        mol.update_next_sn();
+        for i in 0..mol.atoms.len() {
+            if mol.atoms[i].explicit_valence.is_some() {
+                mol.populate_hydrogens_on_atom(i);
+            }
+        }
+    }
+}
+
 #[cfg(feature = "adme")]
 /// Prepare one molecule once before running the bundled ADME models. The ADME crate repairs
 /// missing or untrusted 3D geometry with RDKit; doing that here makes the backend choice visible
@@ -138,6 +161,7 @@ pub(crate) enum SessionRestorePayload {
         specific_params: Option<(String, ForceFieldParams)>,
     },
     Density(DensityMap),
+    Cube(crate::volume::SavedVolume),
     GeneralForceField(ForceFieldParams),
     SpecificForceField(String, ForceFieldParams),
     Trajectory(Trajectory, Option<ViewerMolSet>),
@@ -352,6 +376,7 @@ pub(crate) fn parse_session_history(
                 specific_params,
             }
         }
+        OpenType::Cube => SessionRestorePayload::Cube(crate::volume::SavedVolume::load(path)?),
         OpenType::Map => {
             let extension = path
                 .extension()
@@ -510,6 +535,7 @@ impl State {
                 // todo
             }
             "map" => self.open_map(path)?,
+            "cube" | "cub" => crate::volume::open(self, path, scene, engine_updates)?,
             "mtz" => self.open_mtz(path)?,
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
@@ -1236,27 +1262,7 @@ impl State {
             MoleculeGeneric::Small(mut mol) => {
                 // Before adding hydrogens: they're placed in 3D, even around flat atoms.
                 mol.common.is_2d = mol.common.posits_are_2d();
-
-                // Some 2D Molfiles include only stereochemical hydrogens. GAFF2 typing
-                // needs the remaining H atoms too, or e.g. an alkene CH looks like c1.
-                let has_hydrogens = mol
-                    .common
-                    .atoms
-                    .iter()
-                    .any(|a| a.element == Element::Hydrogen);
-                // Use carbon as the signal for partial hydrogenation: neutral-valence
-                // deficits on heteroatoms alone can instead represent charged centres.
-                let missing_carbon_h = mol.common.atoms.iter().enumerate().any(|(i, a)| {
-                    a.element == Element::Carbon && bonds_avail(i, &mol.common, a.element) > 0
-                });
-
-                if !has_hydrogens || missing_carbon_h {
-                    println!(
-                        "Small molecule {} missing hydrogens; adding.",
-                        mol.common.ident
-                    );
-                    mol.common.populate_hydrogens()
-                }
+                complete_small_molecule_hydrogens(&mut mol.common);
 
                 if !keep_posit {
                     place_mol_in_view(&mut mol.common, self, &scene.camera);
@@ -1597,6 +1603,7 @@ impl Default for FileDialogs {
             "dat", "prmtop", "pmp", "parquet", "trr", "xtc", "dcd", "mdp",
         ];
         exts_all.extend(sequence::seq_exts_open());
+        exts_all.extend(["cube", "cub"]);
 
         let cfg_all = FileDialogConfig::default()
             .add_file_filter_extensions("Molchanica project", vec!["mcproj"])
@@ -1608,6 +1615,7 @@ impl Default for FileDialogs {
             .add_file_filter_extensions("GROMACS molecule input", vec!["gro"])
             .add_file_filter_extensions("Protein (CIF)", vec!["cif"])
             .add_file_filter_extensions("Density", vec!["map", "mtz", "cif"])
+            .add_file_filter_extensions("Gaussian Cube", vec!["cube", "cub"])
             .add_file_filter_extensions("Mol dynamics", vec!["frcmod", "dat", "lib", "prmtop"])
             //
             .add_file_filter_extensions("TRR (trajectory)", vec!["trr"])

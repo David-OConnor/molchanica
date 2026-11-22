@@ -43,6 +43,7 @@ use crate::{
 
 const MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x02";
 const LEGACY_MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x01";
+const VOLUME_MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x03";
 const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
 fn invalid(message: impl ToString) -> io::Error {
@@ -204,6 +205,7 @@ impl Common {
                     serial_number: a.serial,
                     posit: a.position,
                     element: Element::from_letter(&a.element)?,
+                    explicit_valence: None,
                     role,
                     type_in_res: name,
                     type_in_res_general: a.general_name,
@@ -1219,7 +1221,16 @@ pub fn save(state: &State, scene: &Scene, path: &Path) -> io::Result<()> {
         mol_sets: viewer.mol_sets.iter().map(MolSet::capture).collect(),
         active: state.volatile.active_mol.map(|(k, i)| (kind_byte(k), i)),
     };
-    let bytes = bincode::encode_to_vec(project, bincode::config::standard()).map_err(invalid)?;
+    let cfg = bincode::config::standard();
+    let mut bytes = bincode::encode_to_vec(project, cfg).map_err(invalid)?;
+    let volumes: Vec<_> = state.volumes.saved().collect();
+    let magic = if volumes.is_empty() {
+        MAGIC
+    } else {
+        bytes
+            .extend(bincode::encode_to_vec((volumes, state.volumes.active), cfg).map_err(invalid)?);
+        VOLUME_MAGIC
+    };
     if bytes.len() as u64 > MAX_BYTES {
         return Err(invalid("Project exceeds 1 GiB"));
     }
@@ -1229,7 +1240,7 @@ pub fn save(state: &State, scene: &Scene, path: &Path) -> io::Result<()> {
             .write(true)
             .create_new(true)
             .open(&temporary)?;
-        file.write_all(MAGIC)?;
+        file.write_all(magic)?;
         let mut encoder = GzEncoder::new(file, Compression::default());
         encoder.write_all(&bytes)?;
         encoder.finish()?.sync_all()?;
@@ -1256,7 +1267,7 @@ pub fn load(
     let mut file = fs::File::open(path)?;
     let mut magic = vec![0; MAGIC.len()];
     file.read_exact(&mut magic)?;
-    if magic != MAGIC && magic != LEGACY_MAGIC {
+    if magic != MAGIC && magic != LEGACY_MAGIC && magic != VOLUME_MAGIC {
         return Err(invalid("Unsupported Molchanica project version"));
     }
     let mut bytes = Vec::new();
@@ -1271,7 +1282,17 @@ pub fn load(
         bincode::config::standard().with_limit::<1073741824>(),
     )
     .map_err(invalid)?;
-    if read != bytes.len() {
+    let (volumes, more) = if magic == VOLUME_MAGIC {
+        let ((volumes, active), more) = bincode::decode_from_slice(
+            &bytes[read..],
+            bincode::config::standard().with_limit::<1073741824>(),
+        )
+        .map_err(invalid)?;
+        (crate::volume::Volumes::restore(volumes, active)?, more)
+    } else {
+        (Default::default(), 0)
+    };
+    if read + more != bytes.len() {
         return Err(invalid("Trailing project data"));
     }
     project.appearance.validate().map_err(invalid)?;
@@ -1321,6 +1342,8 @@ pub fn load(
     state.nucleic_acids = restored.nucleic_acids;
     state.lipids = restored.lipids;
     state.pockets = restored.pockets;
+    state.volumes = volumes;
+    scene.meshes[crate::render::MESH_VOLUME] = graphics::Mesh::default();
     let mesh_start = crate::render::MESH_POCKET_START;
     scene.meshes.resize_with(
         scene

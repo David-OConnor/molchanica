@@ -79,6 +79,7 @@ pub struct State {
     // pub pharmacophores: Vec<Pharmacophore>,
     pub pockets: Vec<Pocket>,
     pub sequences: Vec<Sequence>,
+    pub(crate) volumes: crate::volume::Volumes,
     pub trajectories: Vec<Trajectory>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
@@ -138,6 +139,7 @@ impl Default for State {
             lipids: Default::default(),
             pockets: Default::default(),
             sequences: Default::default(),
+            volumes: Default::default(),
             trajectories: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),

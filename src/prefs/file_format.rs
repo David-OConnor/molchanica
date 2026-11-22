@@ -410,6 +410,7 @@ impl OpenType {
             Self::ParquetDb => 9,
             Self::MdMols => 10,
             Self::Sequence => 11,
+            Self::Cube => 12,
         }
     }
     pub(crate) fn from_u8(v: u8) -> Self {
@@ -425,6 +426,7 @@ impl OpenType {
             9 => Self::ParquetDb,
             10 => Self::MdMols,
             11 => Self::Sequence,
+            12 => Self::Cube,
             _ => Self::Peptide,
         }
     }

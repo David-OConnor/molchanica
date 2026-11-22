@@ -172,9 +172,12 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
         .filter(|m| m.visible())
         .flat_map(|m| m.atom_posits.iter().map(|p| (*p).into()));
 
-    if let Some((nearest, farthest)) =
-        visible_dist_range(peptide_positions.chain(other_positions), cam)
-    {
+    if let Some((nearest, farthest)) = visible_dist_range(
+        peptide_positions
+            .chain(other_positions)
+            .chain(state.volumes.visible_positions()),
+        cam,
+    ) {
         cam.fog_start = nearest;
         cam.fog_end = farthest;
     }
@@ -380,6 +383,13 @@ fn mean_position(positions: impl Iterator<Item = Vec3>) -> Vec3 {
 /// Determine the center and size used by view presets. Peptides are framed by their bounding radius.
 fn reset_frame(state: &State) -> (Vec3, f32) {
     let md = &state.volatile.md_local;
+    if !md.draw_md_mols
+        && state.volatile.active_mol.is_none()
+        && let Some(bounds) = state.volumes.active_bounds()
+    {
+        return bounds;
+    }
+
     let default_size = if md.draw_md_mols { 60. } else { 8. };
     let mol = state
         .active_mol()

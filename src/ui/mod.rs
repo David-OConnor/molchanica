@@ -1027,6 +1027,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             }
 
             load_popups(state, scene, ui, &mut redraw, &mut updates);
+            crate::volume::sync_scene(state, scene, &mut updates);
 
             return;
         }
@@ -1220,6 +1221,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     }
     crate::drawing::representations::update(state, scene, &mut updates);
     crate::drawing::floor::update(state, scene, &mut updates);
+    crate::volume::sync_scene(state, scene, &mut updates);
     crate::util::release_unused_scene_memory(state, scene, &mut updates);
     state.release_mol_db_caches();
     updates.camera |= cam::apply_slab(state, &mut scene.camera);

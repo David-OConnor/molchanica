@@ -190,6 +190,17 @@ pub fn run_tool_logged(
     control: Option<&RunControl>,
     stdout_log: Option<&Path>,
 ) -> io::Result<()> {
+    run_tool_with_io(command, tool, workflow, control, Stdio::null(), stdout_log)
+}
+
+pub(crate) fn run_tool_with_io(
+    command: &mut Command,
+    tool: Tool,
+    workflow: &str,
+    control: Option<&RunControl>,
+    stdin: Stdio,
+    stdout_log: Option<&Path>,
+) -> io::Result<()> {
     let name = tool.spec().name();
     if let Some(control) = control {
         control.check_cancelled(tool)?;
@@ -202,7 +213,7 @@ pub fn run_tool_logged(
         command.process_group(0);
     }
     command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let _banner = RunBanner::new(workflow, name, command);

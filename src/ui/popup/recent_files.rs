@@ -23,7 +23,7 @@ use crate::{
 const ROW_GAP: f32 = 4.;
 
 /// The order in which file-type filter buttons are displayed.
-const TYPES_DISPLAY_ORDER: [OpenType; 12] = [
+const TYPES_DISPLAY_ORDER: [OpenType; 13] = [
     OpenType::Peptide,
     OpenType::Ligand,
     OpenType::NucleicAcid,
@@ -31,6 +31,7 @@ const TYPES_DISPLAY_ORDER: [OpenType; 12] = [
     OpenType::Pocket,
     OpenType::Sequence,
     OpenType::Map,
+    OpenType::Cube,
     OpenType::Trajectory,
     OpenType::MdMols,
     OpenType::MdParams,
@@ -57,6 +58,7 @@ fn type_descrip_plural(type_: OpenType) -> &'static str {
         OpenType::Lipid => "lipids",
         OpenType::Pocket => "pockets",
         OpenType::Map => "density maps",
+        OpenType::Cube => "Cube maps",
         OpenType::Frcmod => "force field files",
         OpenType::Trajectory => "MD trajectories",
         OpenType::MdParams => "MD param files",
@@ -195,6 +197,7 @@ pub(in crate::ui::popup) fn recent_files_popup(
                 OpenType::Lipid => mol_type_color(MolType::Lipid),
                 OpenType::Pocket => mol_type_color(MolType::Pocket),
                 OpenType::Sequence => COLOR_TYPE_SEQ,
+                OpenType::Cube => crate::volume::TYPE_COLOR,
                 _ => Color32::WHITE,
             };
 

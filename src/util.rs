@@ -241,6 +241,14 @@ pub fn _bond_angle(atoms: &[Atom], bond_0: &Bond, bond_1: &Bond) -> f64 {
 pub fn orbit_center(state: &State) -> Vec3F32 {
     const ZERO: Vec3F32 = Vec3F32::new_zero();
 
+    if state.volatile.active_mol.is_none()
+        && state.volatile.active_seq.is_none()
+        && state.volatile.operating_mode == OperatingMode::Primary
+        && let Some(center) = state.volumes.active_center()
+    {
+        return center;
+    }
+
     if state.ui.orbit_selected_atom && state.volatile.operating_mode != OperatingMode::MolEditor {
         match &state.ui.selection {
             Selection::Atoms(_) | Selection::ResiduesNucleicAcid(_) => {

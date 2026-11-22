@@ -9,7 +9,7 @@ use std::{
     fmt::Write as _,
     fs, io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -24,12 +24,15 @@ use na_seq::Element;
 use serde_json::{Value, json};
 
 use crate::external_tools::{
-    RunControl, Tool, find_executable, process_executables_dir, run_tool_logged,
-    shared_adapter::AdapterResult,
+    RunControl, Tool, find_executable, process::run_tool_with_io, process_executables_dir,
+    run_tool_logged, shared_adapter::AdapterResult,
 };
 
 /// The base name of every run's files: ORCA names its outputs after the input.
 const BASE: &str = "input";
+const DENSITY_CUBE: &str = "electron-density.cube";
+const ESP_CUBE: &str = "input.scfp.esp.cube";
+const ESP_REQUEST: &str = "# Molchanica ESP cube grid: ";
 
 /// An ORCA keyword choice, for the dropdowns.
 #[derive(Clone, Copy, Debug)]
@@ -347,6 +350,76 @@ pub const BASIS_CATEGORIES: [BasisSetCategory; 5] = [
     BasisSetCategory::CorrelationConsistent,
 ];
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrcaPlots {
+    pub density: bool,
+    pub esp: bool,
+    pub grid_points: u32,
+    pub alpha: String,
+    pub beta: String,
+}
+
+impl Default for OrcaPlots {
+    fn default() -> Self {
+        Self {
+            density: false,
+            esp: false,
+            grid_points: 40,
+            alpha: String::new(),
+            beta: String::new(),
+        }
+    }
+}
+
+impl OrcaPlots {
+    fn selected(&self) -> bool {
+        self.density || self.esp || !self.alpha.trim().is_empty() || !self.beta.trim().is_empty()
+    }
+
+    fn orbitals(&self) -> Result<Vec<(u32, u32)>, &'static str> {
+        let mut orbitals = Vec::new();
+        for (spin, indices) in [(0, &self.alpha), (1, &self.beta)] {
+            for index in indices.split(|c: char| c == ',' || c.is_whitespace()) {
+                if !index.is_empty() {
+                    let index = index.parse().map_err(|_| {
+                        "Enter orbital indices as nonnegative integers separated by spaces or commas."
+                    })?;
+                    orbitals.push((spin, index));
+                }
+            }
+        }
+        orbitals.sort_unstable();
+        orbitals.dedup();
+
+        Ok(orbitals)
+    }
+
+    fn block(&self) -> Option<String> {
+        let orbitals = self.orbitals().ok()?;
+        if !self.density && !self.esp && orbitals.is_empty() {
+            return None;
+        }
+
+        let grid = self.grid_points;
+        let mut block = format!(
+            "%plots\n  dim1 {grid}\n  dim2 {grid}\n  dim3 {grid}\n  Format Gaussian_Cube\n"
+        );
+        if self.density || self.esp {
+            let _ = writeln!(block, "  ElDens(\"{DENSITY_CUBE}\");");
+        }
+        for (spin, index) in orbitals {
+            let channel = if spin == 0 { "alpha" } else { "beta" };
+            let _ = writeln!(
+                block,
+                "  MO(\"orbital-{channel}-{index}.cube\",{index},{spin});"
+            );
+        }
+        block.push_str("end");
+
+        Some(block)
+    }
+}
+
 /// Everything "Set parameters here" sets. Each dropdown that may lack an option has a text
 /// override; when not empty, it replaces the dropdown's value.
 #[derive(Clone, Debug, PartialEq)]
@@ -383,6 +456,7 @@ pub struct OrcaParams {
     pub nprocs: u32,
     /// MB per core. 0 for ORCA's default.
     pub maxcore_mb: u32,
+    pub plots: OrcaPlots,
     /// Appended to the keyword lines.
     pub extra_keywords: String,
     /// Input blocks, e.g. `%scf MaxIter 500 end`, written as-is.
@@ -425,6 +499,7 @@ impl Default for OrcaParams {
             md_thermostat: MdThermostat::default(),
             nprocs: 1,
             maxcore_mb: 0,
+            plots: OrcaPlots::default(),
             extra_keywords: String::new(),
             extra_blocks: String::new(),
             geometry: String::new(),
@@ -552,6 +627,22 @@ impl OrcaParams {
         method_has_basis(self.method())
     }
 
+    pub fn plot_error(&self) -> Option<&'static str> {
+        if !self.plots.selected() {
+            return None;
+        }
+
+        if is_xtb(self.method())
+            || matches!(self.task, OrcaTask::ConformerSearch | OrcaTask::Dynamics)
+        {
+            return Some(
+                "Choose an electronic-structure calculation that produces a wavefunction.",
+            );
+        }
+
+        self.plots.orbitals().err()
+    }
+
     /// The `!` keyword lines.
     pub fn keyword_lines(&self) -> Vec<String> {
         let mut lines = Vec::new();
@@ -593,6 +684,9 @@ impl OrcaParams {
             solvation,
         ]);
         lines.push(vec![self.extra_keywords.trim().to_owned()]);
+        if self.plots.esp {
+            lines.push(vec!["KeepDens".into()]);
+        }
 
         lines
             .into_iter()
@@ -660,6 +754,10 @@ impl OrcaParams {
             blocks.push(md.make_inp());
         }
 
+        if let Some(plots) = self.plots.block() {
+            blocks.push(plots);
+        }
+
         let extra = self.extra_blocks.trim();
         if !extra.is_empty() {
             blocks.push(extra.to_owned());
@@ -676,6 +774,9 @@ impl OrcaParams {
     /// The input, with geometry rows past `max_atoms` left out.
     pub fn make_input_abridged(&self, title: &str, max_atoms: usize) -> String {
         let mut text = format!("# {title}\n# Written by Molchanica\n");
+        if self.plots.esp {
+            let _ = writeln!(text, "{ESP_REQUEST}{}", self.plots.grid_points);
+        }
 
         for line in self.keyword_lines() {
             text.push_str(&line);
@@ -875,6 +976,7 @@ pub struct OrcaJob {
     /// For the computation status display.
     pub activity: String,
     geometry_file: Option<String>,
+    esp_grid_points: Option<u32>,
 }
 
 impl OrcaJob {
@@ -891,6 +993,7 @@ impl OrcaJob {
                 "multiplicity": params.multiplicity,
             }),
             geometry_file: params.geometry_file(),
+            esp_grid_points: params.plots.esp.then_some(params.plots.grid_points),
             activity: format!("{} of {title}", params.task.label().to_lowercase()),
             target,
         }
@@ -898,6 +1001,11 @@ impl OrcaJob {
 
     /// From an input written or chosen by the user.
     pub fn from_text(input: String, mode: &'static str) -> Self {
+        let esp_grid_points = input
+            .lines()
+            .find_map(|line| line.strip_prefix(ESP_REQUEST)?.trim().parse().ok())
+            .filter(|points| (8..=160).contains(points));
+
         Self {
             input,
             mode,
@@ -905,6 +1013,7 @@ impl OrcaJob {
             summary: json!({}),
             activity: "running an input".to_owned(),
             geometry_file: None,
+            esp_grid_points,
         }
     }
 }
@@ -933,7 +1042,7 @@ pub fn run(job: OrcaJob, control: &RunControl) -> io::Result<AdapterResult> {
     let output = directory.join(format!("{BASE}.out"));
     fs::write(&input, &job.input)?;
 
-    let mut command = Command::new(executable);
+    let mut command = Command::new(&executable);
     command
         .arg(input.file_name().unwrap())
         .current_dir(&directory);
@@ -964,6 +1073,18 @@ pub fn run(job: OrcaJob, control: &RunControl) -> io::Result<AdapterResult> {
         return Err(with_run_files(reason));
     }
 
+    let mut details = parse_output(&text);
+    if let Some(points) = job.esp_grid_points {
+        control.set_note("Exporting the electrostatic potential cube");
+        if let Err(error) = export_esp_cube(&executable, &directory, &text, points, control) {
+            if control.is_abort_requested() {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Run cancelled"));
+            }
+
+            details["plot_warning"] = json!(format!("Electrostatic potential cube: {error}"));
+        }
+    }
+
     let mut files = Vec::new();
     collect_files(&directory, &mut files)?;
     files.retain(|path| path.file_name().is_some_and(|name| name != "result.json"));
@@ -980,7 +1101,6 @@ pub fn run(job: OrcaJob, control: &RunControl) -> io::Result<AdapterResult> {
         })
         .filter(|path| path.is_file());
 
-    let mut details = parse_output(&text);
     details["tool_slug"] = json!("orca");
     details["input_mode"] = json!(job.mode);
     details["summary"] = job.summary;
@@ -1002,6 +1122,74 @@ pub fn run(job: OrcaJob, control: &RunControl) -> io::Result<AdapterResult> {
         files,
         details,
     })
+}
+
+fn export_esp_cube(
+    orca: &Path,
+    directory: &Path,
+    output: &str,
+    points: u32,
+    control: &RunControl,
+) -> io::Result<()> {
+    let version = output.lines().find_map(|line| {
+        let mut parts = line
+            .trim_start()
+            .strip_prefix("Program Version ")?
+            .split('.');
+        Some((
+            parts.next()?.parse::<u32>().ok()?,
+            parts.next()?.parse::<u32>().ok()?,
+        ))
+    });
+    if version.is_none_or(|version| version < (6, 1)) {
+        return Err(io::Error::other("Requires ORCA 6.1 or newer."));
+    }
+
+    let plot_name = if cfg!(windows) {
+        "orca_plot.exe"
+    } else {
+        "orca_plot"
+    };
+    let mut plot = orca.with_file_name(plot_name);
+    if !plot.is_file()
+        && let Ok(resolved) = orca.canonicalize()
+    {
+        plot = resolved.with_file_name(plot_name);
+    }
+    if !plot.is_file() {
+        return Err(io::Error::other(
+            "Could not find orca_plot next to the ORCA executable.",
+        ));
+    }
+    if !directory.join(format!("{BASE}.densities")).is_file() {
+        return Err(io::Error::other("ORCA did not save a density file."));
+    }
+
+    // Select SCF ESP, Cube format, grid dimensions, generate, and exit.
+    let plot_input = directory.join("esp-plot.txt");
+    fs::write(
+        &plot_input,
+        format!("1\n43\n{BASE}.scfp\n5\n7\n4\n{points} {points} {points}\n11\n12\n"),
+    )?;
+    let plot_log = directory.join("esp-plot.log");
+    let mut command = Command::new(plot);
+    command.args(["input.gbw", "-i"]).current_dir(directory);
+    run_tool_with_io(
+        &mut command,
+        Tool::Orca,
+        "electrostatic potential plotting",
+        Some(control),
+        Stdio::from(fs::File::open(plot_input)?),
+        Some(&plot_log),
+    )
+    .map_err(|error| io::Error::other(format!("{error}\nSee esp-plot.log.")))?;
+    if !directory.join(ESP_CUBE).is_file() {
+        return Err(io::Error::other(
+            "orca_plot produced no ESP cube. See esp-plot.log.",
+        ));
+    }
+
+    Ok(())
 }
 
 fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
