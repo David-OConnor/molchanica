@@ -37,8 +37,8 @@ mol_defs = { version = "0.1.1", features = ["render"] }
 
 # ADME and synthesis are private, unpublished crates. Cargo requires path deps to exist even when
 # optional, so these stay commented out. Uncomment locally to build with `--features adme,synthesis`.
-adme = { path = "../adme", optional = true }
-synthesis = { path = "../synthesis", optional = true }
+#adme = { path = "../adme", optional = true }
+#synthesis = { path = "../synthesis", optional = true }
 
 # Checking for, downloading, and installing new releases, from the About popup. Without its
 # default `gui` feature, which is the Software Manager application itself.

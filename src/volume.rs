@@ -303,8 +303,8 @@ fn focus(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, inde
     if let ControlScheme::Arc { center: orbit } = &mut scene.input_settings.control_scheme {
         *orbit = center;
     }
+
     crate::cam::set_fog(state, &mut scene.camera);
-    scene.camera.fog_end = scene.camera.fog_end.max(distance + radius);
     set_flashlight(scene);
     updates.camera = true;
     updates.lighting = true;
