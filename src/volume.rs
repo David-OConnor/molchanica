@@ -19,10 +19,11 @@ use na_seq::Element;
 
 use crate::{
     cam::{VIEW_DIR_FRONT, cam_look_at_outside},
-    drawing::EntityClass,
+    drawing::{EntityClass, append_translucent_mesh},
     prefs::OpenType,
     render::{MESH_BOND, MESH_SPHERE_MEDRES, MESH_VOLUME, set_flashlight},
     state::{OperatingMode, State},
+    ui::misc::opacity_slider,
     util::clear_mol_entity_indices,
 };
 
@@ -439,9 +440,7 @@ fn settings_ui(view: &mut SavedVolume, peak: &mut f32, ui: &mut Ui) -> (bool, bo
                 remesh = true;
             }
         });
-        update |= ui
-            .add(Slider::new(&mut view.opacity, 0.08..=1.).text("Opacity"))
-            .changed();
+        update |= opacity_slider(ui, &mut view.opacity);
         if !view.grid.atoms.is_empty() {
             update |= ui
                 .checkbox(&mut view.show_atoms, "Show atoms and bonds")
@@ -643,20 +642,7 @@ pub(crate) fn sync_scene(state: &mut State, scene: &mut Scene, updates: &mut Eng
             }
 
             let mesh = volume.mesh.get_or_insert_with(|| surface(&volume.view));
-            let alpha = (volume.view.opacity * 255.).round().clamp(1., 255.) as u8;
-            let offset = combined.vertices.len();
-            combined
-                .vertices
-                .extend(mesh.vertices.iter().copied().map(|mut vertex| {
-                    if let Some((r, g, b, _)) = vertex.color {
-                        vertex.color = Some((r, g, b, alpha));
-                    }
-
-                    vertex
-                }));
-            combined
-                .indices
-                .extend(mesh.indices.iter().map(|i| offset + i));
+            append_translucent_mesh(&mut combined, mesh, volume.view.opacity);
             if volume.view.show_atoms
                 && !geometry
                     .iter()

@@ -1,5 +1,5 @@
 use bio_files::md_params::ForceFieldParams;
-use egui::{Color32, ComboBox, Id, Response, RichText, Sense, Stroke, TextEdit, Ui, vec2};
+use egui::{Color32, ComboBox, Id, Response, RichText, Sense, Slider, Stroke, TextEdit, Ui, vec2};
 use graphics::{ControlScheme, EngineUpdates, Scene};
 use mol_defs::molecules::{
     MolGenericRef, MolType,
@@ -12,10 +12,14 @@ use crate::{
     button,
     cam::move_cam_to_mol_front,
     label,
+    reflection::frame_map,
     state::{MolPickerState, MolSort, State},
     ui::{
         COL_SPACING, COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE, COLOR_REMOVE,
-        highlighted_box, popup::pharmacophore, sidebar,
+        highlighted_box,
+        misc::{active_color, opacity_slider},
+        popup::pharmacophore,
+        sidebar,
     },
     util::{RedrawFlags, close_mol, orbit_center},
 };
@@ -61,6 +65,7 @@ const COLOR_TYPE_NUCLEIC_ACID: Color32 = Color32::from_rgb(235, 110, 215);
 const COLOR_TYPE_POCKET: Color32 = Color32::from_rgb(245, 140, 80);
 const COLOR_TYPE_WATER: Color32 = Color32::from_rgb(100, 210, 230);
 pub(crate) const COLOR_TYPE_SEQ: Color32 = Color32::from_rgb(180, 150, 255);
+pub(crate) const COLOR_TYPE_DENSITY_MAP: Color32 = Color32::from_rgb(65, 220, 220);
 
 /// The color of a row's type indicator, by molecule type.
 pub(crate) fn mol_type_color(mol_type: MolType) -> Color32 {
@@ -761,11 +766,111 @@ pub fn mol_picker(
     {
         *center = orbit_center(state);
     }
+
+    crate::volume::sidebar(state, scene, updates, ui);
+    seq_picker(state, ui);
+    density_picker(state, scene, updates, ui);
+}
+
+fn density_picker(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates, ui: &mut Ui) {
+    let maps = &mut state.density_maps;
+    if maps.items.is_empty() {
+        return;
+    }
+
+    ui.label(RichText::new("Electron density maps").strong());
+    let mut close = None;
+    let mut frame = None;
+    for (i, map) in maps.items.iter_mut().enumerate() {
+        ui.push_id(("density_map", i), |ui| {
+            let active = maps.active == Some(i);
+            highlighted_box(active, Color32::from_rgb(40, 45, 60)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(DRAG_HANDLE_WIDTH + ui.spacing().item_spacing.x);
+                    type_indicator(ui, 'D', COLOR_TYPE_DENSITY_MAP, "Electron density map");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(COL_SPACING / 2.);
+                        if ui
+                            .button(RichText::new("❌").color(COLOR_REMOVE))
+                            .on_hover_text("Close this density map")
+                            .clicked()
+                        {
+                            close = Some(i);
+                        }
+                        if ui
+                            .button(RichText::new("👁 Dots").color(active_color(map.display.dots)))
+                            .on_hover_text("Show or hide this map's density dots")
+                            .clicked()
+                        {
+                            map.display.dots = !map.display.dots;
+                            maps.dots_dirty = true;
+                        }
+                        if ui
+                            .button(RichText::new("👁 Iso").color(active_color(map.display.surface)))
+                            .on_hover_text("Show or hide this map's isosurface")
+                            .clicked()
+                        {
+                            map.display.surface = !map.display.surface;
+                            maps.surfaces_dirty = true;
+                        }
+
+                        let help = map
+                            .path
+                            .as_ref()
+                            .map_or_else(|| map.name.clone(), |path| path.display().to_string());
+                        let row = ui
+                            .add_sized(
+                                vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                egui::Button::new(&map.name).truncate().selected(active),
+                            )
+                            .on_hover_text(format!("{help}\nSelect map. Middle click to close."));
+                        if row.clicked() {
+                            maps.active = Some(i);
+                        }
+                        if row.middle_clicked() {
+                            close = Some(i);
+                        }
+                    });
+                });
+                if active {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().slider_width = 72.;
+                        if ui
+                            .add(
+                                Slider::new(&mut map.display.contour, 0.6..=3.).text("Contour (σ)"),
+                            )
+                            .changed()
+                        {
+                            map.invalidate_mesh();
+                            maps.surfaces_dirty |= map.display.surface;
+                        }
+                        if ui
+                            .small_button("Cam")
+                            .on_hover_text("Frame this map")
+                            .clicked()
+                        {
+                            frame = Some(i);
+                        }
+                    });
+                    ui.spacing_mut().slider_width = 72.;
+                    maps.surfaces_dirty |=
+                        opacity_slider(ui, &mut map.display.opacity) && map.display.surface;
+                }
+            });
+        });
+    }
+
+    if let Some(i) = frame {
+        frame_map(state, scene, updates, i);
+    }
+    if let Some(i) = close {
+        state.close_density(i);
+    }
 }
 
 /// Select and close opened sequences. Like the molecule rows, but sequences aren't
 /// rendered, so there are no visibility, camera, or MD controls.
-pub fn seq_picker(state: &mut State, ui: &mut Ui) {
+fn seq_picker(state: &mut State, ui: &mut Ui) {
     // Applied after the loop; avoids borrow errors, and index shifts while iterating.
     let mut close = None;
     let mut toggle_active = None;

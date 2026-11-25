@@ -13,7 +13,6 @@ use graphics::{ControlScheme, EngineUpdates, Entity, EntityUpdate, Scene, TextOv
 use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::{
     molecules::{Atom, AtomRole, Chain, MolType, peptide::MoleculePeptide},
-    reflection::DensityPt,
     sfc_mesh::{SOLVENT_RAD, make_sas_mesh},
 };
 use na_seq::{AaIdent, Element};
@@ -22,10 +21,10 @@ use crate::{
     drawing,
     drawing::{
         BLEND_AMT_HETERO_RES, COLOR_HETERO_RES, COLOR_MOL_MOVING, COLOR_MOL_ROTATE,
-        COLOR_SA_SURFACE, COLOR_SECONDARY_STRUCTURE, COLOR_SELECTED, COLOR_SFC_DOT,
-        DENSITY_ISO_OPACITY, EntityClass, LABEL_COLOR_ATOM, LABEL_COLOR_MOL, LABEL_COLOR_MOL_SEL,
-        MESH_BALL_STICK_SPHERE, MESH_SPACEFILL_SPHERE, MESH_SURFACE_DOT, MESH_WATER_SPHERE,
-        MoleculeView, SAS_ISO_OPACITY, SIZE_SFC_DOT, atoms_bonds,
+        COLOR_SA_SURFACE, COLOR_SECONDARY_STRUCTURE, COLOR_SELECTED, COLOR_SFC_DOT, EntityClass,
+        LABEL_COLOR_ATOM, LABEL_COLOR_MOL, LABEL_COLOR_MOL_SEL, MESH_BALL_STICK_SPHERE,
+        MESH_SPACEFILL_SPHERE, MESH_SURFACE_DOT, MESH_WATER_SPHERE, MoleculeView, SAS_ISO_OPACITY,
+        SIZE_SFC_DOT, atoms_bonds,
         atoms_bonds::{
             ATOM_SHININESS, BALL_RADIUS_WATER_O, BALL_STICK_RADIUS, BALL_STICK_RADIUS_H,
             draw_hydrogen_bond,
@@ -33,78 +32,11 @@ use crate::{
         effective_mol_view_peptide,
     },
     mol_manip::{ManipMode, PeptideMeshTransform},
-    render::{
-        MESH_CUBE, MESH_DENSITY_SURFACE, MESH_OTHER_RIBBONS, MESH_PEP_SOLVENT_SURFACE,
-        MESH_SECONDARY_STRUCTURE, MESH_SPHERE_LOWRES,
-    },
+    render::{MESH_CUBE, MESH_OTHER_RIBBONS, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE},
     selection::Selection,
     state::{DistFilter, OperatingMode, ResColoring, State, StateUi},
     util::{aromatic_ring_centroid, clear_mol_entity_indices, find_neighbor_posit, orbit_center},
 };
-
-/// A visual representation of volumetric electron density,
-/// as loaded from .map files or similar. This is our point-based approach; not the isosurface.
-/// We change size based on density, and not linearly, for visual effect.
-pub fn draw_density_point_cloud(entities: &mut Vec<Entity>, density: &[DensityPt]) {
-    entities.retain(|ent| ent.class != EntityClass::DensityPoint as u32);
-    // clear_mol_entity_indices(state); // todo: Borrow mut problem.
-
-    // const EPS: f64 = 0.0000001;
-
-    for point in density {
-        // For example, points we filter out for not being near the atoms; we set them to 0 density,
-        // vice omitting them. Skipping them here makes rendering more efficient.
-        // if point.density.abs() < EPS {
-        //     continue;
-        // }
-        if point.density == 0. {
-            continue;
-        }
-
-        // Todo: Sort out how you'll handle this. Currently, You discard these, or they'd go NaN
-        // todo on the power computation.
-        if point.density < 0.0 {
-            continue;
-        }
-
-        let mut ent = Entity::new(
-            MESH_SPHERE_LOWRES,
-            point.coords.into(),
-            Quaternion::new_identity(),
-            0.03 * point.density.powf(1.3) as f32,
-            (point.density as f32 * 2., 0.0, 0.2),
-            ATOM_SHININESS,
-        );
-        ent.class = EntityClass::DensityPoint as u32;
-
-        entities.push(ent);
-    }
-}
-
-/// An isosurface of electron density,
-/// as loaded from .map files or similar.
-pub fn draw_density_surface(
-    entities: &mut Vec<Entity>,
-    state: &mut State,
-    updates: &mut EngineUpdates,
-) {
-    entities.retain(|ent| ent.class != EntityClass::DensitySurface as u32);
-    clear_mol_entity_indices(state, None);
-
-    let mut ent = Entity::new(
-        MESH_DENSITY_SURFACE,
-        Vec3::new_zero(),
-        Quaternion::new_identity(),
-        1.,
-        (0., 1., 1.),
-        ATOM_SHININESS,
-    );
-    ent.class = EntityClass::DensitySurface as u32;
-    ent.opacity = DENSITY_ISO_OPACITY;
-    entities.push(ent);
-
-    updates.entities = EntityUpdate::All;
-}
 
 /// The dots view of solvent-accessible-surface
 fn draw_dots(

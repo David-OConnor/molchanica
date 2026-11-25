@@ -969,6 +969,7 @@ pub struct SceneState {
     /// (Object key, visibility per `project::vis_to_byte`, chain visibility)
     pub objects: Vec<(String, u8, Vec<bool>)>,
     pub selection: String,
+    /// Legacy contour, used when importing old projects.
     pub density_iso: f32,
     pub frame: Option<usize>,
     pub trajectory_set: Option<usize>,
@@ -1075,7 +1076,7 @@ impl SceneState {
                 })
                 .collect(),
             selection: expression::current_expression(state),
-            density_iso: state.ui.density_iso_level,
+            density_iso: crate::reflection::DensityDisplay::default().contour,
             frame: state.volatile.md_local.viewer.current_snapshot,
             trajectory_set: state.volatile.md_local.viewer.mol_set_active,
             draw_trajectory: state.volatile.md_local.draw_md_mols,
@@ -1129,7 +1130,6 @@ impl SceneState {
         state.ui.inspection.colors = self.inspection.colors.clone();
         state.ui.inspection.charge_palette = self.inspection.charge_palette;
         state.ui.inspection.solid_colors = self.inspection.solid_colors.clone();
-        state.ui.density_iso_level = self.density_iso;
         state.to_save.depth_mode = if let Some(v) = self.depth {
             DepthMode::Manual(v)
         } else if self.depth_auto {
@@ -1182,12 +1182,6 @@ impl SceneState {
                 .is_some();
         state.volatile.flags.update_ss_mesh = true;
         state.volatile.flags.update_sas_coloring = true;
-        state.volatile.flags.make_density_iso_mesh = true;
-        scene.entities.retain(|e| {
-            e.class != crate::drawing::EntityClass::DensityPoint as u32
-                && e.class != crate::drawing::EntityClass::DensitySurface as u32
-        });
-        state.volatile.flags.new_density_loaded = true;
         state.to_save.save_flag = true;
         scene.camera.fov_y = self.fov;
         scene.camera.near = self.near;

@@ -6,7 +6,7 @@ use std::{fmt, fmt::Display, io, io::ErrorKind, str::FromStr, sync::OnceLock};
 use bincode::{Decode, Encode};
 use bio_files::{BondType, ResidueType};
 use egui::{Color32, FontFamily};
-use graphics::{EngineUpdates, Entity, Outline, Scene, TextOverlay, UP_VEC};
+use graphics::{EngineUpdates, Entity, Mesh, Outline, Scene, TextOverlay, UP_VEC};
 use lin_alg::{
     f32::{Quaternion, Vec3},
     f64::Vec3 as Vec3F64,
@@ -49,6 +49,23 @@ pub mod representations;
 pub mod ribbon_mesh;
 mod viridis_lut;
 pub mod wrappers;
+
+pub(crate) fn append_translucent_mesh(combined: &mut Mesh, mesh: &Mesh, opacity: f32) {
+    let alpha = (opacity * 255.).round().clamp(1., 255.) as u8;
+    let offset = combined.vertices.len();
+    combined
+        .vertices
+        .extend(mesh.vertices.iter().copied().map(|mut vertex| {
+            if let Some((r, g, b, _)) = vertex.color {
+                vertex.color = Some((r, g, b, alpha));
+            }
+
+            vertex
+        }));
+    combined
+        .indices
+        .extend(mesh.indices.iter().map(|i| offset + i));
+}
 
 const COLOR_MOL_MOVING: Color = (1., 1., 1.);
 const COLOR_MOL_ROTATE: Color = (0.65, 1., 0.65);
@@ -118,7 +135,6 @@ pub const SIZE_SFC_DOT: f32 = 0.03;
 
 const DIMMED_AMT: f32 = 0.92; // Higher value means more dim.
 
-pub const DENSITY_ISO_OPACITY: f32 = 0.5;
 pub const SAS_ISO_OPACITY: f32 = 0.75;
 pub const POCKET_SURFACE_OPACITY: f32 = 0.85;
 

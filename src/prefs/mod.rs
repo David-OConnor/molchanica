@@ -125,6 +125,8 @@ pub struct OpenHistory {
     /// Only applicable for molecules and similar. The rigid rotation, about the centroid, from
     /// the file's coordinates to the molecule's current ones.
     pub orientation: Option<Quaternion>,
+    /// Protein source used to clip a density map.
+    pub(crate) density_peptide: Option<PathBuf>,
     /// For determining which to open at program start.
     pub last_session: bool,
 }
@@ -138,6 +140,7 @@ impl OpenHistory {
             ident,
             type_,
             orientation: None,
+            density_peptide: None,
             position: None,
             last_session: true,
         }

@@ -198,6 +198,7 @@ pub(in crate::ui::popup) fn recent_files_popup(
                 OpenType::Pocket => mol_type_color(MolType::Pocket),
                 OpenType::Sequence => COLOR_TYPE_SEQ,
                 OpenType::Cube => crate::volume::TYPE_COLOR,
+                OpenType::Map => crate::ui::sidebar::mol_picker::COLOR_TYPE_DENSITY_MAP,
                 _ => Color32::WHITE,
             };
 

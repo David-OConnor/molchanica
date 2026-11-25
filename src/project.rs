@@ -23,7 +23,6 @@ use mol_defs::{
         pocket::Pocket,
         small::MoleculeSmall,
     },
-    reflection::{DensityPt, DensityRect},
     screening::pharmacophore::{
         FeatureRelation, Motion, Pharmacophore, PharmacophoreFeatType, PharmacophoreFeature,
     },
@@ -37,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     inspection::SceneState,
     md::viewer::{ViewerMolSet, ViewerMolecule},
+    reflection::{DensityDisplay, DensityGrid, DensityMapView},
     selection::expression,
     state::{CamSnapshot, OperatingMode, State},
 };
@@ -44,6 +44,7 @@ use crate::{
 const MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x02";
 const LEGACY_MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x01";
 const VOLUME_MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x03";
+const DENSITY_MAGIC: &[u8] = b"MOLCHANICA-PROJECT\0\x04";
 const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 
 fn invalid(message: impl ToString) -> io::Error {
@@ -334,69 +335,90 @@ struct SavedChain {
 }
 
 #[derive(Encode, Decode)]
-struct Density {
+struct LegacyDensity {
     map: Option<Vec<u8>>,
     points: Option<Vec<(Vec3, f64)>>,
     brick: Option<(Vec3, [f64; 3], [usize; 3], Vec<f32>)>,
 }
 
-impl Density {
-    fn capture(p: &MoleculePeptide) -> io::Result<Self> {
-        let map = if let Some(map) = &p.density_map {
-            let file = Temporary::new("map");
-            map.save(&file.0)?;
-            Some(fs::read(&file.0)?)
-        } else {
-            None
+impl LegacyDensity {
+    fn restore(self, peptide: &MoleculePeptide) -> io::Result<Option<DensityMapView>> {
+        let Some(bytes) = self.map else {
+            return Ok(None);
         };
 
-        Ok(Self {
+        let map = DensityMap::open(&mut io::Cursor::new(bytes))?;
+        let grid = match self.brick {
+            Some((origin, step, dims, mut values)) => {
+                if let Some(points) = self.points.filter(|points| points.len() == values.len()) {
+                    for (value, (_, density)) in values.iter_mut().zip(points) {
+                        *value = density as f32;
+                    }
+                }
+
+                let grid = DensityGrid {
+                    origin,
+                    step,
+                    dims,
+                    values,
+                };
+                grid.validate()?;
+
+                grid
+            }
+            None => DensityGrid::from_map(&map)?,
+        };
+
+        Ok(Some(DensityMapView::new(
+            format!("{} density", peptide.common.ident),
+            None,
             map,
-            points: p
-                .elec_density
-                .as_ref()
-                .map(|p| p.iter().map(|p| (p.coords, p.density)).collect()),
-            brick: p
-                .density_rect
-                .as_ref()
-                .map(|b| (b.origin_cart, b.step, b.dims, b.data.clone())),
+            grid,
+            DensityDisplay::default(),
+        )))
+    }
+}
+
+#[derive(Encode, Decode)]
+struct SavedDensityMap<Grid> {
+    name: String,
+    path: Option<PathBuf>,
+    map: Vec<u8>,
+    grid: Grid,
+    display: DensityDisplay,
+}
+
+impl<'a> SavedDensityMap<&'a DensityGrid> {
+    fn capture(view: &'a DensityMapView) -> io::Result<Self> {
+        let file = Temporary::new("map");
+        view.map.save(&file.0)?;
+
+        Ok(Self {
+            name: view.name.clone(),
+            path: view.path.clone(),
+            map: fs::read(&file.0)?,
+            grid: &view.grid,
+            display: view.display,
         })
     }
+}
 
-    fn restore(self, p: &mut MoleculePeptide) -> io::Result<()> {
-        if let Some(map) = self.map {
-            let file = Temporary::new("map");
-            fs::write(&file.0, map)?;
-            p.density_map = Some(DensityMap::load(&file.0)?);
-        }
-        if let Some(points) = self.points {
-            if points.iter().any(|(p, d)| !finite(*p) || !d.is_finite()) {
-                return Err(invalid("Invalid density points"));
-            }
-            p.elec_density = Some(
-                points
-                    .into_iter()
-                    .map(|(coords, density)| DensityPt { coords, density })
-                    .collect(),
-            );
-        }
-        if let Some((origin_cart, step, dims, data)) = self.brick {
-            if dims.iter().try_fold(1usize, |n, d| n.checked_mul(*d)) != Some(data.len())
-                || !finite(origin_cart)
-                || step.iter().any(|v| !v.is_finite() || *v <= 0.)
-                || data.iter().any(|v| !v.is_finite())
-            {
-                return Err(invalid("Invalid density grid"));
-            }
-            p.density_rect = Some(DensityRect {
-                origin_cart,
-                step,
-                dims,
-                data,
-            });
+impl SavedDensityMap<DensityGrid> {
+    fn restore(self) -> io::Result<DensityMapView> {
+        self.grid.validate()?;
+        if !self.display.contour.is_finite() || !(0.08..=1.).contains(&self.display.opacity) {
+            return Err(invalid("Invalid density display settings"));
         }
 
-        Ok(())
+        let map = DensityMap::open(&mut io::Cursor::new(self.map))?;
+
+        Ok(DensityMapView::new(
+            self.name,
+            self.path,
+            map,
+            self.grid,
+            self.display,
+        ))
     }
 }
 
@@ -404,6 +426,7 @@ impl Density {
 /// overflows the stack in debug builds.
 #[derive(Default)]
 struct RestoredMols {
+    legacy_density_maps: Vec<DensityMapView>,
     peptides: Vec<MoleculePeptide>,
     ligands: Vec<MoleculeSmall>,
     nucleic_acids: Vec<MoleculeNucleicAcid>,
@@ -421,7 +444,7 @@ struct Molecule {
     chains: Vec<SavedChain>,
     secondary: Vec<(u32, u32, u8)>,
     cif: Option<String>,
-    density: Option<Density>,
+    density: Option<LegacyDensity>,
     peptide_ids: Vec<PeptideIdent>,
     small_ids: Vec<MolIdent>,
     nucleic: Option<(
@@ -433,7 +456,7 @@ struct Molecule {
 }
 
 impl Molecule {
-    fn capture(mol: &MolGenericRef<'_>, full: bool) -> io::Result<Self> {
+    fn capture(mol: &MolGenericRef<'_>, full: bool) -> Self {
         let (residues, chains) = match mol {
             MolGenericRef::Peptide(p) => (&p.residues[..], &p.chains[..]),
             MolGenericRef::NucleicAcid(p) => (&p.residues[..], &[][..]),
@@ -441,7 +464,7 @@ impl Molecule {
             _ => (&[][..], &[][..]),
         };
 
-        Ok(Self {
+        Self {
             pharmacophore: match mol {
                 MolGenericRef::Small(p) if full => {
                     Some(SavedPharmacophore::capture(&p.pharmacophore))
@@ -476,10 +499,7 @@ impl Molecule {
                 MolGenericRef::Peptide(p) if full => p.source_cif.clone(),
                 _ => None,
             },
-            density: match mol {
-                MolGenericRef::Peptide(p) if full => Some(Density::capture(p)?),
-                _ => None,
-            },
+            density: None,
             peptide_ids: match mol {
                 MolGenericRef::Peptide(p) => p.idents.clone(),
                 _ => Vec::new(),
@@ -503,7 +523,7 @@ impl Molecule {
                 )),
                 _ => None,
             },
-        })
+        }
     }
 
     fn restore(self, mols: &mut RestoredMols) -> io::Result<()> {
@@ -591,8 +611,10 @@ impl Molecule {
                         })
                     })
                     .collect::<io::Result<_>>()?;
-                if let Some(density) = self.density {
-                    density.restore(&mut p)?;
+                if let Some(density) = self.density
+                    && let Some(view) = density.restore(&p)?
+                {
+                    mols.legacy_density_maps.push(view);
                 }
                 mols.peptides.push(p);
             }
@@ -953,7 +975,7 @@ pub(crate) fn save_md_inputs(
             params.save_dat(&file.0, "Molchanica MD parameters")?;
             parameters.push((common.ident.clone(), fs::read_to_string(&file.0)?));
         }
-        molecules.push(Molecule::capture(&mol, false)?);
+        molecules.push(Molecule::capture(&mol, false));
     }
 
     let gfnff = state.selected_force_field().gfnff();
@@ -1213,7 +1235,7 @@ pub fn save(state: &State, scene: &Scene, path: &Path) -> io::Result<()> {
         molecules: expression::objects(state)
             .iter()
             .map(|(_, _, m)| Molecule::capture(m, true))
-            .collect::<io::Result<_>>()?,
+            .collect(),
         camera: CamSnapshot::from_cam(&scene.camera, "Current view".into()),
         appearance: SceneState::capture(state, scene),
         scenes: state.cam_snapshots.clone(),
@@ -1224,12 +1246,27 @@ pub fn save(state: &State, scene: &Scene, path: &Path) -> io::Result<()> {
     let cfg = bincode::config::standard();
     let mut bytes = bincode::encode_to_vec(project, cfg).map_err(invalid)?;
     let volumes: Vec<_> = state.volumes.saved().collect();
-    let magic = if volumes.is_empty() {
-        MAGIC
-    } else {
+    let magic = if !state.density_maps.items.is_empty() {
+        let maps = state
+            .density_maps
+            .items
+            .iter()
+            .map(SavedDensityMap::capture)
+            .collect::<io::Result<Vec<_>>>()?;
         bytes
             .extend(bincode::encode_to_vec((volumes, state.volumes.active), cfg).map_err(invalid)?);
+        bytes.extend(
+            bincode::encode_to_vec((maps, state.density_maps.active), cfg).map_err(invalid)?,
+        );
+
+        DENSITY_MAGIC
+    } else if !volumes.is_empty() {
+        bytes
+            .extend(bincode::encode_to_vec((volumes, state.volumes.active), cfg).map_err(invalid)?);
+
         VOLUME_MAGIC
+    } else {
+        MAGIC
     };
     if bytes.len() as u64 > MAX_BYTES {
         return Err(invalid("Project exceeds 1 GiB"));
@@ -1267,7 +1304,7 @@ pub fn load(
     let mut file = fs::File::open(path)?;
     let mut magic = vec![0; MAGIC.len()];
     file.read_exact(&mut magic)?;
-    if magic != MAGIC && magic != LEGACY_MAGIC && magic != VOLUME_MAGIC {
+    if magic != MAGIC && magic != LEGACY_MAGIC && magic != VOLUME_MAGIC && magic != DENSITY_MAGIC {
         return Err(invalid("Unsupported Molchanica project version"));
     }
     let mut bytes = Vec::new();
@@ -1282,7 +1319,7 @@ pub fn load(
         bincode::config::standard().with_limit::<1073741824>(),
     )
     .map_err(invalid)?;
-    let (volumes, more) = if magic == VOLUME_MAGIC {
+    let (volumes, volume_bytes) = if magic == VOLUME_MAGIC || magic == DENSITY_MAGIC {
         let ((volumes, active), more) = bincode::decode_from_slice(
             &bytes[read..],
             bincode::config::standard().with_limit::<1073741824>(),
@@ -1292,7 +1329,26 @@ pub fn load(
     } else {
         (Default::default(), 0)
     };
-    if read + more != bytes.len() {
+    let mut density_maps = crate::reflection::DensityMaps::default();
+    let density_bytes = if magic == DENSITY_MAGIC {
+        let ((maps, active), consumed): (
+            (Vec<SavedDensityMap<DensityGrid>>, Option<usize>),
+            usize,
+        ) = bincode::decode_from_slice(
+            &bytes[read + volume_bytes..],
+            bincode::config::standard().with_limit::<1073741824>(),
+        )
+        .map_err(invalid)?;
+        for map in maps {
+            density_maps.push(map.restore()?);
+        }
+        density_maps.active = active.filter(|&i| i < density_maps.items.len());
+
+        consumed
+    } else {
+        0
+    };
+    if read + volume_bytes + density_bytes != bytes.len() {
         return Err(invalid("Trailing project data"));
     }
     project.appearance.validate().map_err(invalid)?;
@@ -1304,6 +1360,13 @@ pub fn load(
     let mut restored = RestoredMols::default();
     for molecule in project.molecules {
         molecule.restore(&mut restored)?;
+    }
+    for mut view in restored.legacy_density_maps {
+        view.display.surface = !project.appearance.visibility.hide_density_surface;
+        view.display.dots = !project.appearance.visibility.hide_density_point_cloud;
+        view.display.contour = project.appearance.density_iso;
+        let i = density_maps.push(view);
+        density_maps.active.get_or_insert(i);
     }
     let sequences = project
         .sequences
@@ -1343,6 +1406,7 @@ pub fn load(
     state.lipids = restored.lipids;
     state.pockets = restored.pockets;
     state.volumes = volumes;
+    state.density_maps = density_maps;
     scene.meshes[crate::render::MESH_VOLUME] = graphics::Mesh::default();
     let mesh_start = crate::render::MESH_POCKET_START;
     scene.meshes.resize_with(
@@ -1405,7 +1469,6 @@ pub fn load(
     state.ui.inspection.charge_palette = state.to_save.inspection.charge_palette;
     state.ui.inspection.solid_colors = state.to_save.inspection.solid_colors.clone();
     state.volatile.flags.scene_restored = true;
-    state.volatile.flags.new_density_loaded = true;
     updates.entities = EntityUpdate::All;
     updates.meshes = true;
     updates.lighting = true;

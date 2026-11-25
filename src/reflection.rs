@@ -3,9 +3,10 @@
 //! For displaying electron density as measured by crytalography and Cryo-EM reflection data. From precomputed
 //! data, or Miller indices.
 
+mod maps;
+
 // todo: This is currently a disorganized dumping ground of related data. Organize it,
 // todo, move to bio_files as requried, and add cuFFT.
-
 #[cfg(feature = "cuda")]
 use std::sync::Arc;
 use std::{io, time::Instant};
@@ -15,18 +16,15 @@ use bio_files::{DensityMap, MapHeader, UnitCell, cif_sf::CifStructureFactors};
 use cudarc::driver::{CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
 use dynamics::ComputationDevice;
 use ewald::fft3d_c2r;
-use graphics::{EngineUpdates, Mesh, Scene, Vertex};
 #[cfg(feature = "cuda")]
 use lin_alg::f32::Vec3 as Vec3F32;
 use lin_alg::f64::{Vec3, Vec3x4, pack_vec3x4};
-use mcubes::{MarchingCubes, MeshSide};
+pub(crate) use maps::{
+    DensityDisplay, DensityGrid, DensityMapView, DensityMaps, frame_map, map_name, sync_scene,
+};
 use mol_defs::reflection::{DensityPt, DensityRect};
 use rayon::prelude::*;
 use rustfft::{FftPlanner, num_complex::Complex};
-
-use crate::{
-    drawing::peptide::draw_density_surface, render::MESH_DENSITY_SURFACE, state::State, util,
-};
 
 /// The parts of density-map construction that need a compute device (and, on the GPU path, our CUDA
 /// kernel). `DensityRect` itself is defined in `mol_defs`, which has no reason to know about either,
@@ -253,72 +251,6 @@ fn make_densities_inner(
             DensityPt { coords, density }
         })
         .collect()
-}
-
-/// Populate the electron-density mesh (isosurface). This assumes the density_rect is already set up.
-pub fn make_density_mesh(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    let Some(mol) = state
-        .peptide_for_tools_i()
-        .and_then(|i| state.peptides.get(i))
-    else {
-        return;
-    };
-    let Some(rect) = &mol.density_rect else {
-        return;
-    };
-    let Some(density_pts) = &mol.elec_density else {
-        return;
-    };
-    let Some(map) = &mol.density_map else {
-        return;
-    };
-
-    // DensityRect and marching cubes both use X-fast storage.
-    let dims = (rect.dims[0], rect.dims[1], rect.dims[2]); // (nx, ny, nz)
-    let step = [rect.step[0], rect.step[1], rect.step[2]]; // (nx, ny, nz)
-
-    let size = (
-        (step[0] * dims.0 as f64) as f32, // Δx * nx  (Å)
-        (step[1] * dims.1 as f64) as f32,
-        (step[2] * dims.2 as f64) as f32,
-    );
-
-    let sampling_interval = (dims.0 as f32, dims.1 as f32, dims.2 as f32);
-
-    let density: Vec<_> = density_pts.iter().map(|p| p.density as f32).collect();
-    match MarchingCubes::new(
-        dims,
-        size,
-        sampling_interval,
-        rect.origin_cart.into(),
-        density,
-        state.ui.density_iso_level,
-    ) {
-        Ok(mc) => {
-            let mesh = mc.generate(MeshSide::OutsideOnly);
-
-            // Convert from `mcubes::Mesh` to `graphics::Mesh`.
-            let vertices = mesh
-                .vertices
-                .iter()
-                .map(|v| Vertex::new(v.posit.to_arr(), v.normal))
-                .collect();
-
-            scene.meshes[MESH_DENSITY_SURFACE] = Mesh {
-                vertices,
-                indices: mesh.indices,
-                material: 0,
-            };
-            updates.meshes = true;
-
-            if !state.ui.visibility.hide_density_surface {
-                draw_density_surface(&mut scene.entities, state, updates);
-            }
-
-            // _updates.entities.push_class(EntityClass::SaSurface as u32);
-        }
-        Err(e) => util::handle_err(&mut state.ui, e.to_string()),
-    }
 }
 
 // todo: Code below represents a local implementation of creating a map from 2fo-fc

@@ -25,7 +25,7 @@ use crate::{
     drawing::{
         CHARGE_MAP_MAX, CHARGE_MAP_MIN, COLOR_AA_NON_RESIDUE_EGUI, wrappers::draw_all_pockets,
     },
-    file_io::gemmi_dir,
+    file_io::{gemmi_dir, lock_density_conversion},
     label,
     md::mdposit,
     peptide_ligands::{LigAttachUi, detach_het_res, remove_het_res},
@@ -761,12 +761,13 @@ fn display_peptide_actions(
             )
             .clicked()
         {
-            match gemmi_dir()
-                .and_then(|dir| density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, Some(&dir)))
-            {
+            match gemmi_dir().and_then(|dir| {
+                let _conversion = lock_density_conversion();
+
+                density_from_2fo_fc_rcsb_gemmi(&mol.common.ident, Some(&dir))
+            }) {
                 Ok(density) => {
-                    density_to_load = Some(density);
-                    handle_success(&mut state.ui, "Loaded density data from RCSB".to_owned());
+                    density_to_load = Some((density, format!("{} 2Fo−Fc", mol.common.ident)));
                 }
                 Err(e) => handle_err(
                     &mut state.ui,
@@ -788,7 +789,10 @@ fn display_peptide_actions(
                 Ok(data) => {
                     let mut cursor = Cursor::new(data);
                     match DensityMap::open(&mut cursor) {
-                        Ok(density) => density_to_load = Some(density),
+                        Ok(density) => {
+                            density_to_load =
+                                Some((density, format!("{} RCSB map", mol.common.ident)))
+                        }
                         Err(_) => handle_err(
                             &mut state.ui,
                             format!("Error loading RCSB Map for {:?}", &mol.common.ident),
@@ -803,8 +807,14 @@ fn display_peptide_actions(
         }
     }
 
-    if let Some(density) = density_to_load {
-        state.load_density(density);
+    if let Some((density, name)) = density_to_load {
+        match state.load_density(density, name, None, Some(peptide_i)) {
+            Ok(_) => handle_success(&mut state.ui, "Loaded density data from RCSB".to_owned()),
+            Err(e) => handle_err(
+                &mut state.ui,
+                format!("Error opening RCSB density map: {e}"),
+            ),
+        }
     }
 
     if let Some(res_i) = res_to_detach {

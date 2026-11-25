@@ -1052,6 +1052,10 @@ impl OpenHistory {
             }
             None => out.push(0),
         }
+        if let Some(path) = &self.density_peptide {
+            out.extend_from_slice(path.to_string_lossy().as_bytes());
+        }
+
         out
     }
     pub(crate) fn from_bytes(data: &[u8]) -> io::Result<Self> {
@@ -1093,14 +1097,23 @@ impl OpenHistory {
         i += 1;
 
         // Absent from prefs written before orientation was added.
-        let orientation = if data.get(i).is_some_and(|v| *v != 0) {
-            i += 1;
+        let has_orientation = data.get(i).is_some_and(|v| *v != 0);
+        i += 1;
+        let orientation = if has_orientation {
             let len = parse_le!(data, u32, i..i + 4) as usize;
             i += 4;
             let o = bincode::decode_from_slice(&data[i..i + len], bincode::config::standard())
                 .unwrap()
                 .0;
+            i += len;
             Some(o)
+        } else {
+            None
+        };
+        let density_peptide = if type_ == OpenType::Map && i < data.len() {
+            Some(PathBuf::from(
+                String::from_utf8_lossy(&data[i..]).into_owned(),
+            ))
         } else {
             None
         };
@@ -1112,6 +1125,7 @@ impl OpenHistory {
             ident,
             position,
             orientation,
+            density_peptide,
             last_session,
         })
     }

@@ -80,6 +80,7 @@ pub struct State {
     pub pockets: Vec<Pocket>,
     pub sequences: Vec<Sequence>,
     pub(crate) volumes: crate::volume::Volumes,
+    pub(crate) density_maps: crate::reflection::DensityMaps,
     pub trajectories: Vec<Trajectory>,
     pub cam_snapshots: Vec<CamSnapshot>,
     /// This allows us to keep in-memory data for other molecules.
@@ -123,7 +124,6 @@ impl Default for State {
         // Many other UI defaults are loaded after the initial prefs load in `main`.
         let ui = StateUi {
             nearby_dist_thresh: 15,
-            density_iso_level: 1.8,
             mol_view_peptide: MoleculeView::default(),
             mol_view: MoleculeView::DEFAULT_NON_PEPTIDE,
             ..Default::default()
@@ -140,6 +140,7 @@ impl Default for State {
             pockets: Default::default(),
             sequences: Default::default(),
             volumes: Default::default(),
+            density_maps: Default::default(),
             trajectories: Default::default(),
             cam_snapshots: Default::default(),
             to_save: Default::default(),
@@ -721,8 +722,6 @@ pub struct StateUi {
     /// position in the sequence.
     pub res_coloring: ResColoring,
     pub atom_color_by_charge: bool,
-    /// Affects the electron density mesh.
-    pub density_iso_level: f32,
     // /// E.g. set to original for from the mmCIF file, or Dynamics to view it after MD.
     // peptide_atom_posits: PeptideAtomPosits,
     pub popup: PopupState,
@@ -931,6 +930,7 @@ pub struct Visibility {
     pub hide_h_bonds: bool,
     /// Unused; formerly `dim_peptide`. Keeps the encoded layout of saved projects.
     pub(crate) reserved_0: bool,
+    /// Legacy density visibility, used when importing old projects.
     pub hide_density_point_cloud: bool,
     pub hide_density_surface: bool,
     pub hide_pockets: bool,
@@ -1389,8 +1389,5 @@ pub struct SceneFlags {
     /// Visibility of the peptides represented by the cached ribbon meshes.
     pub ss_mesh_visible: Vec<bool>,
     pub sas_mesh_created: bool,
-    pub make_density_iso_mesh: bool,
-    pub clear_density_drawing: bool,
-    pub new_density_loaded: bool,
     pub new_mol_loaded: bool,
 }

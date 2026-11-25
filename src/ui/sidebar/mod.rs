@@ -514,8 +514,6 @@ pub(in crate::ui) fn sidebar(
                 mol_editor_sidebar::pocket_list(state, scene, updates, ui);
             } else {
                 mol_picker::mol_picker(state, scene, ui, redraw, updates);
-                crate::volume::sidebar(state, scene, updates, ui);
-                mol_picker::seq_picker(state, ui);
                 traj_items(state, scene, updates, ui, redraw);
                 md_viewer::viewer_mol_set(state, scene, updates, ui, redraw);
             }

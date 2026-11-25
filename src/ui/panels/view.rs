@@ -1,21 +1,17 @@
-use egui::{ComboBox, RichText, Slider, Ui};
-use graphics::{EngineUpdates, EntityUpdate, Scene};
+use egui::{ComboBox, Ui};
+use graphics::{EngineUpdates, Scene};
 use mol_defs::sfc_mesh::MeshColoring;
 
 use crate::{
-    drawing::{
-        EntityClass, MoleculeView, draw_water,
-        peptide::{draw_density_point_cloud, draw_density_surface},
-        wrappers::{draw_all_ligs, draw_all_lipids, draw_all_nucleic_acids},
-    },
+    drawing::{MoleculeView, draw_water},
     render::MESH_POCKET_START,
     sfc_mesh::{apply_mesh_colors, get_mesh_colors},
     state::State,
     ui::{
-        COL_SPACING, DENS_ISO_MAX, DENS_ISO_MIN, misc,
-        misc::{active_color, toggle_btn, toggle_btn_inv},
+        COL_SPACING,
+        misc::{toggle_btn, toggle_btn_inv},
     },
-    util::{RedrawFlags, clear_mol_entity_indices},
+    util::RedrawFlags,
 };
 
 fn molecule_view_selector(
@@ -288,79 +284,6 @@ pub fn view_settings(
             ui,
             redraw,
         );
-    }
-
-    if let Some(mol) = state
-        .peptide_for_tools_i()
-        .and_then(|i| state.peptides.get(i))
-        && let Some(dens) = &mol.elec_density
-    {
-        let mut redraw_dens = false;
-
-        // `toggle_btn_inv`, but with out `RedrawFlags`.
-        let color = active_color(!state.ui.visibility.hide_density_point_cloud);
-        if ui
-            .button(RichText::new("Density").color(color))
-            .on_hover_text("Show or hide the electron density point cloud visualization")
-            .clicked()
-        {
-            state.ui.visibility.hide_density_point_cloud =
-                !state.ui.visibility.hide_density_point_cloud;
-            // todo: Don't need to redraw everything.
-            redraw_dens = true;
-        }
-
-        if redraw_dens {
-            if state.ui.visibility.hide_density_point_cloud {
-                scene
-                    .entities
-                    .retain(|ent| ent.class != EntityClass::DensityPoint as u32);
-            } else {
-                draw_density_point_cloud(&mut scene.entities, dens);
-            }
-            clear_mol_entity_indices(state, None);
-            updates.entities = EntityUpdate::All;
-            // engine_updates.entities.push_class(EntityClass::Peptide as u32);
-        }
-
-        let mut redraw_dens_surface = false;
-
-        // This is `toggle_btn_inv`, but with out `RedrawFlags`.
-        let color = active_color(!state.ui.visibility.hide_density_surface);
-        if ui
-            .button(RichText::new("Density sfc").color(color))
-            .on_hover_text("Show or hide the electron density isosurface visualization")
-            .clicked()
-        {
-            state.ui.visibility.hide_density_surface = !state.ui.visibility.hide_density_surface;
-            redraw_dens_surface = true;
-        }
-
-        if !state.ui.visibility.hide_density_surface {
-            let iso_prev = state.ui.density_iso_level;
-
-            ui.spacing_mut().slider_width = 300.;
-            ui.add(Slider::new(
-                &mut state.ui.density_iso_level,
-                DENS_ISO_MIN..=DENS_ISO_MAX,
-            ))
-            .on_hover_text("The density value at which to draw the ISO surface");
-            if state.ui.density_iso_level != iso_prev {
-                state.volatile.flags.make_density_iso_mesh = true;
-            }
-        }
-
-        if redraw_dens_surface {
-            if state.ui.visibility.hide_density_surface {
-                scene
-                    .entities
-                    .retain(|ent| ent.class != EntityClass::DensitySurface as u32);
-                clear_mol_entity_indices(state, None);
-                updates.entities = EntityUpdate::All;
-            } else {
-                draw_density_surface(&mut scene.entities, state, updates);
-            }
-        }
     }
 }
 

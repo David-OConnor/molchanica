@@ -61,9 +61,6 @@ use crate::{cam::VIEW_DIR_FRONT, ui::popup::about::DOCS_URL};
 pub(in crate::ui) const ROW_SPACING: f32 = 10.;
 pub(in crate::ui) const COL_SPACING: f32 = 30.;
 
-const DENS_ISO_MIN: f32 = 0.6;
-const DENS_ISO_MAX: f32 = 3.0;
-
 const NEARBY_THRESH_MIN: u16 = 5;
 const NEARBY_THRESH_MAX: u16 = 60;
 
@@ -1028,6 +1025,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
             load_popups(state, scene, ui, &mut redraw, &mut updates);
             crate::volume::sync_scene(state, scene, &mut updates);
+            crate::reflection::sync_scene(state, scene, &mut updates);
 
             return;
         }
@@ -1222,6 +1220,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
     crate::drawing::representations::update(state, scene, &mut updates);
     crate::drawing::floor::update(state, scene, &mut updates);
     crate::volume::sync_scene(state, scene, &mut updates);
+    crate::reflection::sync_scene(state, scene, &mut updates);
     crate::util::release_unused_scene_memory(state, scene, &mut updates);
     state.release_mol_db_caches();
     updates.camera |= cam::apply_slab(state, &mut scene.camera);

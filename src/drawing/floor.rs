@@ -108,19 +108,17 @@ pub struct Floor {
     pub y: f32,
     /// The placement of the current floor entities.
     placed: Option<Placement>,
+    had_molecules: bool,
 }
 
 impl Floor {
     /// Place below the lowest atom.
     pub fn fit(state: &State) -> Self {
-        let y = sample_posits(state)
-            .map(|p| p.y)
-            .reduce(f32::min)
-            .map_or(HEIGHT_DEFAULT, |min| {
-                ((min - MARGIN_BELOW) / HEIGHT_SNAP).floor() * HEIGHT_SNAP
-            });
-
-        Self { y, placed: None }
+        Self {
+            y: fit_height(state),
+            placed: None,
+            had_molecules: has_open_molecules(state),
+        }
     }
 
     fn entities(&self, pl: Placement) -> Vec<Entity> {
@@ -303,6 +301,26 @@ fn mesh_line(along_x: bool, color: Rgba, segments: usize) -> Mesh {
     }
 }
 
+fn has_open_molecules(state: &State) -> bool {
+    !state.peptides.is_empty()
+        || !state.ligands.is_empty()
+        || !state.nucleic_acids.is_empty()
+        || !state.lipids.is_empty()
+        || (state.volatile.operating_mode == OperatingMode::MolEditor
+            && !state.mol_editor.mol.common.atom_posits.is_empty())
+        || (state.volatile.md_local.draw_md_mols
+            && !state.volatile.md_local.viewer.snapshots.is_empty())
+}
+
+fn fit_height(state: &State) -> f32 {
+    sample_posits(state)
+        .map(|p| p.y)
+        .reduce(f32::min)
+        .map_or(HEIGHT_DEFAULT, |min| {
+            ((min - MARGIN_BELOW) / HEIGHT_SNAP).floor() * HEIGHT_SNAP
+        })
+}
+
 /// Positions of visible atoms, sampled for large molecules.
 fn sample_posits(state: &State) -> Box<dyn Iterator<Item = Vec3> + '_> {
     if state.volatile.operating_mode == OperatingMode::MolEditor {
@@ -370,12 +388,20 @@ pub fn toggle(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates)
     update(state, scene, updates);
 }
 
-/// Follow the camera, and re-add the floor if a full rebuild cleared the scene's entities. Run
-/// after all drawing for the frame.
+/// Refit on the first molecule, follow the camera, and restore missing floor entities.
+/// Run after all drawing for the frame.
 pub fn update(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
-    let Some(floor) = &mut state.ui.floor else {
+    let Some(mut floor) = state.ui.floor else {
         return;
     };
+
+    let has_molecules = has_open_molecules(state);
+    let refit = has_molecules && !floor.had_molecules;
+    if refit {
+        floor.y = fit_height(state);
+    }
+    floor.had_molecules = has_molecules;
+    let floor = state.ui.floor.insert(floor);
 
     let shadows = scene.floor_shadows.get_or_insert_with(|| FloorShadows {
         y: floor.y,
@@ -392,7 +418,7 @@ pub fn update(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates)
         state.to_save.ui_prefs.floor_grid_spacing,
     );
     let rebuilding = matches!(updates.entities, EntityUpdate::All);
-    if !rebuilding && floor.placed == Some(placement) {
+    if !refit && !rebuilding && floor.placed == Some(placement) {
         return;
     }
 

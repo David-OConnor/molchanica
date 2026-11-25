@@ -175,7 +175,8 @@ pub fn set_fog_dists_by_near_and_far_mols(state: &State, cam: &mut Camera) {
     if let Some((nearest, farthest)) = visible_dist_range(
         peptide_positions
             .chain(other_positions)
-            .chain(state.volumes.visible_positions()),
+            .chain(state.volumes.visible_positions())
+            .chain(state.density_maps.visible_positions()),
         cam,
     ) {
         cam.fog_start = nearest;
@@ -385,7 +386,10 @@ fn reset_frame(state: &State) -> (Vec3, f32) {
     let md = &state.volatile.md_local;
     if !md.draw_md_mols
         && state.volatile.active_mol.is_none()
-        && let Some(bounds) = state.volumes.active_bounds()
+        && let Some(bounds) = state
+            .volumes
+            .active_bounds()
+            .or_else(|| state.density_maps.active_bounds())
     {
         return bounds;
     }

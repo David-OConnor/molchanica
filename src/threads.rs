@@ -320,7 +320,9 @@ pub fn start_session_restore(state: &mut State) {
     }
 
     state.volatile.session_restore_started = true;
-    let histories = state.to_save.open_history.clone();
+    let mut histories = state.to_save.open_history.clone();
+    // Load proteins before maps that use their coordinates for clipping.
+    histories.sort_by_key(|history| history.density_peptide.is_some());
     let referenced = histories
         .iter()
         .map(|history| history.path.clone())
@@ -394,7 +396,21 @@ fn apply_session_restore_item(
                 }
             }
         }
-        SessionRestorePayload::Density(density) => state.load_density(density),
+        SessionRestorePayload::Density(density) => {
+            let peptide_i = history.density_peptide.as_ref().and_then(|path| {
+                state
+                    .peptides
+                    .iter()
+                    .position(|peptide| peptide.common.path.as_ref() == Some(path))
+            });
+            let name = crate::reflection::map_name(&history.path);
+            if let Err(error) = state.load_density(density, name, Some(history.path), peptide_i) {
+                handle_err(
+                    &mut state.ui,
+                    format!("Error restoring density map: {error}"),
+                );
+            }
+        }
         SessionRestorePayload::Cube(cube) => {
             let index = state.volumes.push(cube);
             if state.volatile.active_mol.is_none() && state.volatile.active_seq.is_none() {

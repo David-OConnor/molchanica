@@ -37,13 +37,11 @@ use crate::{
     drawing::{
         COLOR_AA_NON_RESIDUE, EntityClass, HYDROPHOBICITY_MAX, HYDROPHOBICITY_MIN, MoleculeView,
         color_alternating_contrast, color_viridis, color_viridis_float, effective_mol_view_peptide,
-        peptide::{draw_density_point_cloud, draw_peptide},
-        ribbon_mesh::build_ribbon_mesh,
-        wrappers::draw_all_ligs,
+        peptide::draw_peptide, ribbon_mesh::build_ribbon_mesh, wrappers::draw_all_ligs,
     },
     mol_manip::{ManipMode, PeptideMeshTransform, transform_peptide_mesh},
     prefs::{OpenType, PREFS_SAVE_INTERVAL},
-    rdkit_smiles, reflection,
+    rdkit_smiles,
     render::{
         Color, MESH_OTHER_RIBBONS, MESH_PEP_SOLVENT_SURFACE, MESH_SECONDARY_STRUCTURE,
         set_flashlight,
@@ -244,7 +242,10 @@ pub fn orbit_center(state: &State) -> Vec3F32 {
     if state.volatile.active_mol.is_none()
         && state.volatile.active_seq.is_none()
         && state.volatile.operating_mode == OperatingMode::Primary
-        && let Some(center) = state.volumes.active_center()
+        && let Some(center) = state
+            .volumes
+            .active_center()
+            .or_else(|| state.density_maps.active_bounds().map(|(center, _)| center))
     {
         return center;
     }
@@ -584,8 +585,6 @@ pub fn close_peptide(
 
     scene.entities.retain(|ent| {
         ent.class != EntityClass::Protein as u32
-            && ent.class != EntityClass::DensityPoint as u32
-            && ent.class != EntityClass::DensitySurface as u32
             && ent.class != EntityClass::SecondaryStructure as u32
             && ent.class != EntityClass::SaSurface as u32
             && ent.class != EntityClass::SaSurfaceDots as u32
@@ -594,7 +593,7 @@ pub fn close_peptide(
 
     if let Some(path) = path {
         for history in &mut state.to_save.open_history {
-            if matches!(history.type_, OpenType::Peptide | OpenType::Map) && history.path == path {
+            if history.type_ == OpenType::Peptide && history.path == path {
                 history.last_session = false;
             }
         }
@@ -636,7 +635,6 @@ pub fn close_peptide(
 fn clear_peptide_meshes(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) {
     for slot in [
         MESH_PEP_SOLVENT_SURFACE,
-        crate::render::MESH_DENSITY_SURFACE,
         MESH_SECONDARY_STRUCTURE,
         MESH_OTHER_RIBBONS,
     ] {
@@ -688,7 +686,6 @@ pub fn release_unused_scene_memory(
     if state.peptides.is_empty()
         && [
             MESH_PEP_SOLVENT_SURFACE,
-            crate::render::MESH_DENSITY_SURFACE,
             MESH_SECONDARY_STRUCTURE,
             MESH_OTHER_RIBBONS,
         ]
@@ -846,40 +843,6 @@ pub fn handle_scene_flags(state: &mut State, scene: &mut Scene, updates: &mut En
 
         set_flashlight(scene);
         updates.lighting = true;
-    }
-
-    if state.volatile.flags.new_density_loaded {
-        state.volatile.flags.new_density_loaded = false;
-
-        if let Some(mol) = state
-            .peptide_for_tools_i()
-            .and_then(|i| state.peptides.get(i))
-            && !state.ui.visibility.hide_density_point_cloud
-            && let Some(density) = &mol.elec_density
-        {
-            draw_density_point_cloud(&mut scene.entities, density);
-            clear_mol_entity_indices(state, None);
-            updates.entities = EntityUpdate::All;
-            // engine_updates
-            //     .entities
-            //     .push_class(EntityClass::DensityPoint as u32);
-            return;
-        }
-    }
-
-    if state.volatile.flags.clear_density_drawing {
-        state.volatile.flags.clear_density_drawing = false;
-
-        scene.entities.retain(|ent| {
-            ent.class != EntityClass::DensityPoint as u32
-                && ent.class != EntityClass::DensitySurface as u32
-        });
-        clear_mol_entity_indices(state, None);
-    }
-
-    if state.volatile.flags.make_density_iso_mesh {
-        state.volatile.flags.make_density_iso_mesh = false;
-        reflection::make_density_mesh(state, scene, updates);
     }
 
     if state.volatile.flags.update_ss_mesh {

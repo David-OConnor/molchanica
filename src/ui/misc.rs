@@ -1,7 +1,8 @@
 //! Misc utility-related UI functionality.
 
 use egui::{
-    Color32, CornerRadius, CursorIcon, Frame, Label, Margin, Response, RichText, Sense, Stroke, Ui,
+    Color32, CornerRadius, CursorIcon, Frame, Label, Margin, Response, RichText, Sense, Slider,
+    Stroke, Ui,
 };
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 /// Unselected options of a selector; a slight orange hue distinguishes them from plain labels.
@@ -12,6 +13,11 @@ use crate::{
     ui::{COLOR_ACTIVE, COLOR_ACTIVE_RADIO, COLOR_INACTIVE},
     util::RedrawFlags,
 };
+
+pub(crate) fn opacity_slider(ui: &mut Ui, opacity: &mut f32) -> bool {
+    ui.add(Slider::new(opacity, 0.08..=1.).text("Opacity"))
+        .changed()
+}
 
 /// A box that shows its text highlighted if a flag is set.
 pub fn toggle_btn_inv(

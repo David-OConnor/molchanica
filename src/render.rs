@@ -218,7 +218,7 @@ pub fn render(state: State) {
             Mesh::new_box(1., 1., 1.),
             Mesh::new_box(1., 1., 1.), // Placeholder for VDW/SA surface; populated later.
             Mesh::new_box(1., 1., 1.), // Placeholder for docking site surface; populated later.
-            Mesh::new_box(1., 1., 1.), // Placeholder for density surface; populated later.
+            Mesh::default(),           // Crystallographic isosurfaces.
             Mesh::new_box(1., 1., 1.), // Placeholder for secondary structure surface; populated later.
             Mesh::default(),           // Ribbons for other open peptides.
             floor::mesh_disc(),

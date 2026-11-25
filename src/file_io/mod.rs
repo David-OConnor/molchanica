@@ -10,6 +10,7 @@ use std::{
     io,
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard},
     time::Instant,
 };
 
@@ -36,7 +37,6 @@ use mol_defs::{
         peptide::MoleculePeptide,
         small::MoleculeSmall,
     },
-    reflection::{DENSITY_CELL_MARGIN, DENSITY_MAX_DIST, DensityPt, DensityRect},
     screening::pharmacophore::Pharmacophore,
 };
 use na_seq::{Element, Sequence};
@@ -62,7 +62,7 @@ use crate::{
     nucleic_acid_creation::nucleotide,
     pocket_render::PocketRender,
     prefs::{OpenHistory, OpenType},
-    reflection::DensityRectExt,
+    reflection::{frame_map, map_name},
     selection::Selection,
     state::State,
     util::{handle_err, handle_success},
@@ -377,19 +377,7 @@ pub(crate) fn parse_session_history(
             }
         }
         OpenType::Cube => SessionRestorePayload::Cube(crate::volume::SavedVolume::load(path)?),
-        OpenType::Map => {
-            let extension = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            let density = if matches!(extension.as_str(), "mtz" | "cif") {
-                DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?))?
-            } else {
-                DensityMap::load(path)?
-            };
-            SessionRestorePayload::Density(density)
-        }
+        OpenType::Map => SessionRestorePayload::Density(read_density_file(path)?),
         OpenType::Frcmod => {
             let extension = path
                 .extension()
@@ -453,7 +441,6 @@ pub(in crate::file_io) fn load_peptide(
 
     state.volatile.flags.ss_mesh_created = false;
     state.volatile.flags.sas_mesh_created = false;
-    state.volatile.flags.clear_density_drawing = true;
 
     let centroid = mol.common.centroid();
     let ident = mol.common.ident.clone();
@@ -534,9 +521,8 @@ impl State {
             "prmtop" => {
                 // todo
             }
-            "map" => self.open_map(path)?,
+            "map" | "mtz" => self.open_density_file(path, scene, engine_updates)?,
             "cube" | "cub" => crate::volume::open(self, path, scene, engine_updates)?,
-            "mtz" => self.open_mtz(path)?,
             // todo: lib, .dat etc as required. Using Amber force fields and its format
             // todo to start. We assume it'll be generalizable later.
             "frcmod" | "dat" => self.open_force_field(path)?,
@@ -603,30 +589,15 @@ impl State {
                 Ok(MoleculeGeneric::Small(m))
             }
             "cif" => {
-                // If a 2fo-fc CIF, use gemmi to convert it to Map data.
-                // Using the filename to determine if this is a 2fo-fc file, vice atom coordinates,
-                // is rough here, but good enough for now.
-                // todo: This isn't really opening a molecule, so is out of place. Good enough for now.
-                if let Some(name) = path.file_name().and_then(|os| os.to_str()) {
-                    // Note: This isn't the ideal place to handle 2fo-fc files, but they're in mmCIF format,
-                    // so we handle here. We handle map and MTZ files elsewhere, even though they use a
-                    // similar pipeline.
-                    if name.contains("2fo") && name.contains("fc") {
-                        let dm = DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?))?;
-
-                        // let mut fft_planner = FftPlanner::new();
-                        // let data = CifStructureFactors::new_from_path(path)?;
-
-                        // let dm = density_map_from_mmcif(&data, &mut fft_planner)?;
-
-                        self.load_density(dm);
-
-                        self.update_history(path, OpenType::Map, None);
-                        // Save the open history.
-                        self.update_save_prefs();
-
-                        return Ok(());
-                    }
+                if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        let name = name.to_ascii_lowercase();
+                        name.contains("2fo") && name.contains("fc")
+                    })
+                {
+                    return self.open_density_file(path, scene, engine_updates);
                 }
 
                 let data_str = fs::read_to_string(path)?;
@@ -687,82 +658,43 @@ impl State {
         Ok(())
     }
 
-    pub fn load_density(&mut self, dens_map: DensityMap) {
-        let dev = self.computation_device();
-        #[cfg(feature = "cuda")]
-        let kernel = self.computation_resources().kernel_reflections.clone();
-        let peptide_i = self.peptide_for_tools_i();
-        if let Some(mol) = peptide_i.and_then(|i| self.peptides.get_mut(i)) {
-            // Sample atoms, so we know where to draw the (periodic) density data.
-            // We are filtering for backbone atoms of one type for now, for performance reasons. This is
-            // a sample. Good enough?
+    fn open_density_file(
+        &mut self,
+        path: &Path,
+        scene: &mut Scene,
+        updates: &mut EngineUpdates,
+    ) -> io::Result<()> {
+        let already_open = self
+            .density_maps
+            .items
+            .iter()
+            .position(|view| view.path.as_deref() == Some(path));
+        let index = if let Some(i) = already_open {
+            self.density_maps.reopen(i);
+            let name = self.density_maps.items[i].name.clone();
+            self.update_history(path, OpenType::Map, Some(name));
 
-            let atom_posits: Vec<_> = mol
-                .common
-                .atoms
-                .iter()
-                .filter(|a| a.element != Element::Hydrogen)
-                .map(|a| a.posit)
-                .collect();
+            i
+        } else {
+            let name = map_name(path);
+            let peptide_i = density_peptide(self, &name);
+            let map = read_density_file(path)?;
+            let i = self.load_density(map, name.clone(), Some(path.to_owned()), peptide_i)?;
+            let peptide_path = peptide_i
+                .and_then(|index| self.peptides.get(index))
+                .and_then(|peptide| peptide.common.path.clone());
+            self.update_history(path, OpenType::Map, Some(name));
+            if let Some(history) = self.to_save.open_history.last_mut() {
+                history.density_peptide = peptide_path;
+            }
 
-            let dens_rect = DensityRect::new(&atom_posits, &dens_map, DENSITY_CELL_MARGIN);
+            i
+        };
+        self.update_save_prefs();
 
-            #[cfg(feature = "cuda")]
-            let dens = dens_rect.make_densities(
-                &dev,
-                &kernel,
-                &atom_posits,
-                &dens_map.hdr.inner.cell,
-                DENSITY_MAX_DIST,
-            );
-
-            #[cfg(not(feature = "cuda"))]
-            let dens = dens_rect.make_densities(
-                &dev,
-                &atom_posits,
-                &dens_map.hdr.inner.cell,
-                DENSITY_MAX_DIST,
-            );
-
-            let elec_dens: Vec<_> = dens
-                .iter()
-                .map(|d| DensityPt {
-                    coords: d.coords,
-                    density: d.density,
-                })
-                .collect();
-
-            // println!("Rect: {:?}", dens_rect);
-
-            mol.density_map = Some(dens_map);
-            mol.density_rect = Some(dens_rect);
-            mol.elec_density = Some(elec_dens);
-
-            self.volatile.flags.new_density_loaded = true;
-            self.volatile.flags.make_density_iso_mesh = true;
+        if self.volatile.active_mol.is_none() {
+            frame_map(self, scene, updates, index);
         }
-    }
-
-    /// An electron density map file, e.g. a .map file.
-    pub fn open_map(&mut self, path: &Path) -> io::Result<()> {
-        let dm = DensityMap::load(path)?;
-        self.load_density(dm);
-
-        self.update_history(path, OpenType::Map, None);
-        // Save the open history.
-        self.update_save_prefs();
-
-        Ok(())
-    }
-
-    /// An electron density MTZ file. We use Gemmi's sf2map functionality, as we do for 2fo-fc files.
-    pub fn open_mtz(&mut self, path: &Path) -> io::Result<()> {
-        let dm = DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?))?;
-        self.load_density(dm);
-
-        self.update_history(path, OpenType::Map, None);
-        // Save the open history.
-        self.update_save_prefs();
 
         Ok(())
     }
@@ -1022,30 +954,20 @@ impl State {
                 }
                 None => return Err(io::Error::new(ErrorKind::InvalidData, "No ligand to save")),
             },
-            // todo: Consider if you want to store the original map bytes, as you do with
-            // todo mmCIF files, instead of saving what you parsed.
             "map" | "mtz" => {
-                let Some(mol) = self
-                    .peptide_for_tools_i()
-                    .and_then(|i| self.peptides.get(i))
-                else {
-                    return Err(io::Error::new(
+                let view = self.density_maps.active_map().ok_or_else(|| {
+                    io::Error::new(
                         ErrorKind::InvalidData,
-                        "No molecule open; can't save a density Map.",
-                    ));
+                        "Select a density map in the sidebar to save it",
+                    )
+                })?;
+
+                return if extension == "map" {
+                    view.map.save(path)
+                } else {
+                    let _conversion = lock_density_conversion();
+                    view.map.save_sf_or_mtz(path, Some(&gemmi_dir()?))
                 };
-                let Some(dm) = &mol.density_map else {
-                    return Err(io::Error::new(
-                        ErrorKind::InvalidData,
-                        "No density map loaded for this molecule; can't save it.",
-                    ));
-                };
-                match extension {
-                    "map" => dm.save(path)?,
-                    "mtz" => dm.save_sf_or_mtz(path, Some(&gemmi_dir()?))?,
-                    _ => unreachable!(),
-                }
-                OpenType::Map
             }
             "dcd" | "xtc" | "trr" => {
                 if self.volatile.md_local.mol_dynamics.is_some() {
@@ -1453,6 +1375,52 @@ impl State {
             handle_success(&mut self.ui, format!("Loaded molecule {ident}"));
         }
     }
+}
+
+fn density_peptide(state: &State, map_name: &str) -> Option<usize> {
+    let map_name = map_name.to_ascii_lowercase();
+    let matches_prefix = |name: &str| {
+        !name.is_empty()
+            && map_name
+                .strip_prefix(&name.to_ascii_lowercase())
+                .is_some_and(|suffix| suffix.starts_with(['.', '-', '_']))
+    };
+    let matches = |peptide: &MoleculePeptide| {
+        matches_prefix(&peptide.common.ident)
+            || peptide
+                .common
+                .path
+                .as_deref()
+                .and_then(Path::file_stem)
+                .and_then(|name| name.to_str())
+                .is_some_and(matches_prefix)
+    };
+    let active = state.peptide_for_tools_i();
+
+    active
+        .filter(|&i| matches(&state.peptides[i]))
+        .or_else(|| state.peptides.iter().position(matches))
+        .or(active)
+}
+
+fn read_density_file(path: &Path) -> io::Result<DensityMap> {
+    let extension = path.extension().unwrap_or_default().to_ascii_lowercase();
+    if extension == "mtz" || extension == "cif" {
+        let _conversion = lock_density_conversion();
+
+        return DensityMap::load_sf_or_mtz(path, Some(&gemmi_dir()?));
+    }
+
+    DensityMap::load(path)
+}
+
+/// The Gemmi wrappers share an intermediate filename.
+pub(crate) fn lock_density_conversion() -> MutexGuard<'static, ()> {
+    static CONVERSION: Mutex<()> = Mutex::new(());
+
+    CONVERSION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The directory holding the `gemmi` executable, which opens structure-factor mmCIF and MTZ files.
