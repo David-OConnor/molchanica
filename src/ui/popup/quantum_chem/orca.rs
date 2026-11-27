@@ -12,7 +12,9 @@ use egui_file_dialog::{FileDialogConfig, Filter};
 use na_seq::Element;
 use serde_json::Value;
 
-use super::{InputPreview, QcApply, choice_override, input_preview_ui, override_box};
+use super::{
+    InputPreview, QcApply, TWO_COLUMN_MIN_WIDTH, choice_override, input_preview_ui, override_box,
+};
 use crate::{
     orca::{
         AuxBasis, BASIS_CATEGORIES, ChargeScheme, DftGrid, Dispersion, FreqKind, METHODS,
@@ -208,20 +210,17 @@ pub(in crate::ui::popup) fn form_ui(
             }
 
             let top = ui.min_rect().bottom();
-            input_preview_ui(
-                &form.preview,
-                "orca_input_preview",
-                (height * 0.35).clamp(60., 280.),
-                ui,
-            );
+            input_preview_ui(&mut form.preview, "orca_input_preview", height, ui);
             height -= ui.min_rect().bottom() - top;
 
+            // Decided outside the scroll area, so its scroll bar coming and going can't flip it.
+            let two_columns = ui.available_width() >= TWO_COLUMN_MIN_WIDTH;
             ScrollArea::vertical()
                 .id_salt("orca_form_scroll")
                 .max_height(height)
                 .auto_shrink([true, false])
                 .show(ui, |ui| {
-                    if parameters_ui(form, active, ui) {
+                    if parameters_ui(form, active, two_columns, ui) {
                         event.use_active_mol = true;
                     }
                 });
@@ -325,22 +324,74 @@ const GEOMETRY_HELP: &str = "One atom per row: element, then x, y, z in Å. Or a
     Z-matrix (first row the element alone), written as * gzmt. For other coordinate formats, use \
     Enter input.";
 
-/// Returns whether "Use active molecule" was clicked.
-fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -> bool {
-    let mut use_active_mol = false;
+/// What the form knows of the geometry, as of the preview.
+struct GeometryInfo {
+    atom_count: usize,
+    has_hydrogens: bool,
+    /// The molecule it came from, and the sum of its partial charges.
+    source: Option<(String, Option<f32>)>,
+}
 
-    let atom_count = form.elements.len();
-    let has_hydrogens = form.elements.contains(&Some(Element::Hydrogen));
+/// Every section, in two columns where there's room: what's computed on the left, and how on the
+/// right. Returns whether "Use active molecule" was clicked.
+fn parameters_ui(
+    form: &mut OrcaForm,
+    active: Option<&ActiveMol>,
+    two_columns: bool,
+    ui: &mut Ui,
+) -> bool {
+    let geometry = GeometryInfo {
+        atom_count: form.elements.len(),
+        has_hydrogens: form.elements.contains(&Some(Element::Hydrogen)),
+        source: form
+            .source()
+            .map(|source| (source.target.ident.clone(), source.charge_sum)),
+    };
     let electrons = form
         .elements
         .iter()
         .copied()
         .collect::<Option<Vec<_>>>()
         .and_then(electron_count);
-    let source = form
-        .source()
-        .map(|source| (source.target.ident.clone(), source.charge_sum));
     let params = &mut form.params;
+
+    let use_active_mol = if two_columns {
+        // `vertical`, as columns are justified, which would widen links and checkboxes' click
+        // areas to the column.
+        ui.columns_const(|[left, right]| {
+            let clicked = left
+                .vertical(|ui| system_sections_ui(params, active, &geometry, ui))
+                .inner;
+            right.vertical(|ui| setup_sections_ui(params, ui));
+            clicked
+        })
+    } else {
+        let clicked = system_sections_ui(params, active, &geometry, ui);
+        setup_sections_ui(params, ui);
+        clicked
+    };
+
+    for warning in params.warnings(electrons) {
+        ui.colored_label(COLOR_AMBER, warning);
+    }
+    if let Some(error) = params.plot_error() {
+        ui.colored_label(COLOR_AMBER, error);
+    }
+
+    use_active_mol
+}
+
+/// The molecule, the calculation, and the solvent. Returns whether "Use active molecule" was
+/// clicked.
+fn system_sections_ui(
+    params: &mut OrcaParams,
+    active: Option<&ActiveMol>,
+    geometry: &GeometryInfo,
+    ui: &mut Ui,
+) -> bool {
+    let mut use_active_mol = false;
+    let atom_count = geometry.atom_count;
+    let source = &geometry.source;
 
     heading("Molecule", "", ui, |ui| {
         ui.horizontal(|ui| {
@@ -380,13 +431,13 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
                 );
             });
 
-        let summary = match &source {
+        let summary = match source {
             Some((ident, _)) => format!("{atom_count} atoms, from {ident}"),
             None => format!("{atom_count} atoms"),
         };
         ui.label(RichText::new(summary).small());
 
-        if !has_hydrogens && atom_count > 1 {
+        if !geometry.has_hydrogens && atom_count > 1 {
             ui.colored_label(COLOR_AMBER, "No hydrogens. Add them before running.");
         }
         if atom_count > 150 {
@@ -542,6 +593,11 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
         },
     );
 
+    use_active_mol
+}
+
+/// SCF and numerics, resources, plots, and anything else to add to the input.
+fn setup_sections_ui(params: &mut OrcaParams, ui: &mut Ui) {
     heading(
         "SCF and numerics",
         &format!("{DOCS}/essentialelements/scfconvergence.html"),
@@ -593,7 +649,7 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
     );
 
     heading("Resources", "", ui, |ui| {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("CPU cores").on_hover_text(
                 "Parallel runs need OpenMPI. Each core uses its own memory allowance.",
             );
@@ -654,7 +710,7 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
                 ui.add(
                     TextEdit::singleline(&mut params.extra_keywords)
                         .hint_text("e.g. NBO")
-                        .desired_width(300.),
+                        .desired_width(ui.available_width().min(300.)),
                 );
             });
             ui.label("Blocks")
@@ -668,15 +724,6 @@ fn parameters_ui(form: &mut OrcaForm, active: Option<&ActiveMol>, ui: &mut Ui) -
             );
         },
     );
-
-    for warning in params.warnings(electrons) {
-        ui.colored_label(COLOR_AMBER, warning);
-    }
-    if let Some(error) = params.plot_error() {
-        ui.colored_label(COLOR_AMBER, error);
-    }
-
-    use_active_mol
 }
 
 /// Options that only apply to some tasks.
@@ -747,7 +794,7 @@ fn task_options_ui(params: &mut OrcaParams, ui: &mut Ui) {
                 });
             }
             OrcaTask::Dynamics => {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Steps");
                     ui.add(DragValue::new(&mut params.md_steps).range(1..=1_000_000));
                     ui.label("Timestep (fs)");

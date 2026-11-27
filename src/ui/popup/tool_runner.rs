@@ -40,7 +40,7 @@ use crate::{
         pdb_write::{PdbWriteOptions, peptide_to_pdb},
         remote::{self, ComputeTarget},
         shared_adapter::{self, AdapterResult},
-        tool_form::{FieldKind, FormContract, FormField, Preset},
+        tool_form::{FieldGroup, FieldKind, FormContract, FormField, Preset},
     },
     file_io::sequence::{load_sequences, seq_exts_open},
     orca::OrcaJob,
@@ -1408,11 +1408,13 @@ impl ToolWindow {
                 }
                 self.psi4_preview.update(values, ui.ctx());
 
-                let height = (ui.available_height() * 0.3).clamp(60., 280.);
+                // Shared with the form below; see `fields_ui`.
+                let space =
+                    ui.available_height() - self.footer_height - ui.spacing().item_spacing.y;
                 quantum_chem::input_preview_ui(
-                    &self.psi4_preview.preview,
+                    &mut self.psi4_preview.preview,
                     "psi4_input_preview",
-                    height,
+                    space,
                     ui,
                 );
             }
@@ -2562,13 +2564,26 @@ fn fields_ui(
     // Fill the window, less the footer. An egui window can't be dragged taller than its contents.
     let height = ui.available_height() - footer_height - ui.spacing().item_spacing.y;
 
+    // Psi4's parameters, in two columns where there's room. Decided outside the scroll area, so
+    // its scroll bar coming and going can't flip it.
+    let two_columns = tool == Tool::Psi4
+        && form.mode == "parameters"
+        && ui.available_width() >= quantum_chem::TWO_COLUMN_MIN_WIDTH;
+
     ScrollArea::vertical()
         .id_salt("tool_form_scroll")
         .max_height(height)
         .auto_shrink([true, false])
         .show(ui, |ui| {
             let groups = form.contract.groups_in_mode(&form.mode);
-            for (index, (label, group, fields)) in groups.into_iter().enumerate() {
+            let task = form.values.get("task").cloned().unwrap_or_default();
+            let split = two_columns.then(|| column_split(&groups, &task)).flatten();
+
+            let mut group_ui = |ui: &mut Ui,
+                                index: usize,
+                                label: &str,
+                                group: Option<&FieldGroup>,
+                                fields: Vec<&FormField>| {
                 // Every group the contract names gets its own heading. The salt is the group name
                 // rather than the heading text so that the sections keep distinct ids: the one
                 // group a tool may leave unnamed is the only one drawn as "Parameters".
@@ -2609,6 +2624,31 @@ fn fields_ui(
                             });
                         }
                     });
+            };
+
+            let mut groups = groups.into_iter().enumerate();
+            match split {
+                Some(split) => {
+                    // `vertical`, as columns are justified, which would widen links and
+                    // checkboxes' click areas to the column.
+                    ui.columns_const(|[left, right]| {
+                        left.vertical(|ui| {
+                            for (index, (label, group, fields)) in groups.by_ref().take(split) {
+                                group_ui(ui, index, label, group, fields);
+                            }
+                        });
+                        right.vertical(|ui| {
+                            for (index, (label, group, fields)) in groups {
+                                group_ui(ui, index, label, group, fields);
+                            }
+                        });
+                    });
+                }
+                None => {
+                    for (index, (label, group, fields)) in groups {
+                        group_ui(ui, index, label, group, fields);
+                    }
+                }
             }
         });
     if let Some(field) = form.contract.structure_field(&form.mode)
@@ -2635,6 +2675,44 @@ fn fields_ui(
         form.authoritative_mode = form.mode.clone();
         form.projection_error = None;
     }
+}
+
+/// How many of `groups`, in order, go in the left column so the two come out about as tall.
+/// Heights are guessed in rows: one per heading and field, plus a text box's rows. `None` when
+/// there's only one group.
+fn column_split(
+    groups: &[(&str, Option<&FieldGroup>, Vec<&FormField>)],
+    task: &str,
+) -> Option<usize> {
+    if groups.len() < 2 {
+        return None;
+    }
+
+    let rows: Vec<usize> = groups
+        .iter()
+        .map(|(_, _, fields)| {
+            1 + fields
+                .iter()
+                .filter(|field| field.applies_to_task(task))
+                .map(|field| match field.kind() {
+                    FieldKind::TextArea => 1 + field.rows.unwrap_or(3),
+                    _ => 1,
+                })
+                .sum::<usize>()
+        })
+        .collect();
+    let total: usize = rows.iter().sum();
+
+    // The rows left of each split, from one group on the left to all but one.
+    rows.iter()
+        .scan(0, |left, rows| {
+            *left += rows;
+            Some(*left)
+        })
+        .take(groups.len() - 1)
+        .enumerate()
+        .min_by_key(|(_, left)| left.abs_diff(total - left))
+        .map(|(index, _)| index + 1)
 }
 
 fn draw_field(
@@ -2805,14 +2883,15 @@ fn draw_field(
             }
         }
         FieldKind::Number | FieldKind::Text | FieldKind::Other => {
-            let width = if field.kind() == FieldKind::Number {
+            let width: f32 = if field.kind() == FieldKind::Number {
                 100.0
             } else {
                 300.0
             };
             ui.horizontal(|ui| {
                 ui.label(&label);
-                ui.add(TextEdit::singleline(value).desired_width(width));
+                // Narrower where the row has less room, e.g. in a column.
+                ui.add(TextEdit::singleline(value).desired_width(width.min(ui.available_width())));
             })
             .response
         }

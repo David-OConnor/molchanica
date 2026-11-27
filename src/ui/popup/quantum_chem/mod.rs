@@ -13,8 +13,8 @@ use std::{
 };
 
 use egui::{
-    CollapsingHeader, Color32, ComboBox, Grid, RichText, ScrollArea, TextBuffer, TextEdit,
-    TextFormat, TextStyle, Ui, text::LayoutJob,
+    CollapsingHeader, Color32, ComboBox, CursorIcon, Grid, Rect, RichText, ScrollArea, Sense,
+    TextBuffer, TextEdit, TextFormat, TextStyle, Ui, text::LayoutJob, vec2,
 };
 use egui_file_dialog::{FileDialogConfig, Filter};
 use graphics::{EngineUpdates, Scene};
@@ -315,6 +315,9 @@ pub(super) struct InputPreview {
     error: Option<String>,
     /// A newer version is being made.
     pub pending: bool,
+    /// The text area's height, once dragged; until then it fits the text, up to a share of the
+    /// window.
+    height: Option<f32>,
 }
 
 impl InputPreview {
@@ -424,14 +427,30 @@ impl Psi4Preview {
     }
 }
 
-/// The preview, read-only, with lines the last change made highlighted.
+/// The preview's text area is never shorter than this.
+const PREVIEW_MIN_HEIGHT: f32 = 40.;
+/// Dragging the preview taller leaves at least this much of the window to the form below it.
+const FORM_MIN_HEIGHT: f32 = 120.;
+
+/// The parameter forms use two columns from this width.
+pub(super) const TWO_COLUMN_MIN_WIDTH: f32 = 620.;
+
+/// The preview, read-only, with lines the last change made highlighted. Collapsible, and its
+/// height drags from the bar beneath it. `space` is the height it shares with the form below.
 pub(super) fn input_preview_ui(
-    preview: &InputPreview,
+    preview: &mut InputPreview,
     id: &'static str,
-    max_height: f32,
+    space: f32,
     ui: &mut Ui,
 ) {
-    CollapsingHeader::new("Input")
+    let max_height = (space - FORM_MIN_HEIGHT).max(PREVIEW_MIN_HEIGHT);
+    let fit_height = (space * 0.35).clamp(60., 280.).min(max_height);
+    let height = preview.height.map_or(fit_height, |height| {
+        height.clamp(PREVIEW_MIN_HEIGHT, max_height)
+    });
+    let fixed = preview.height.is_some();
+
+    CollapsingHeader::new("Input preview")
         .id_salt(id)
         .default_open(true)
         .show(ui, |ui| {
@@ -466,31 +485,89 @@ pub(super) fn input_preview_ui(
                 ui.fonts_mut(|fonts| fonts.layout_job(job))
             };
 
-            ScrollArea::vertical()
+            let area = ScrollArea::vertical()
                 .id_salt(id)
-                .max_height(max_height)
+                .max_height(height)
+                .auto_shrink([false, !fixed])
                 .show(ui, |ui| {
-                    ui.add(
-                        TextEdit::multiline(&mut preview.text.as_str())
-                            .code_editor()
-                            .desired_rows(4)
-                            .desired_width(f32::INFINITY)
-                            .layouter(&mut layouter),
-                    );
-                });
+                    // Read-only: edits go to this copy of the reference, not the text.
+                    let mut text = preview.text.as_str();
+                    let mut editor = TextEdit::multiline(&mut text)
+                        .code_editor()
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY)
+                        .layouter(&mut layouter);
+                    if fixed {
+                        // Fill the area, rather than end in blank space below short text.
+                        editor = editor.min_size(vec2(0., height));
+                    }
+                    ui.add(editor);
+                })
+                .inner_rect;
+
+            let handle = resize_handle(id, ui);
+            if handle.dragged()
+                && let Some(pointer) = handle.interact_pointer_pos()
+            {
+                // Keep the bar's middle under the pointer.
+                let offset = handle.rect.center().y - area.bottom();
+                preview.height =
+                    Some((pointer.y - offset - area.top()).clamp(PREVIEW_MIN_HEIGHT, max_height));
+            }
+            if handle.double_clicked() {
+                preview.height = None;
+            }
         });
+}
+
+/// A bar to drag the preview's height by.
+fn resize_handle(id: &'static str, ui: &mut Ui) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.), Sense::hover());
+    let response = ui
+        .interact(
+            rect,
+            ui.make_persistent_id((id, "resize")),
+            Sense::click_and_drag(),
+        )
+        .on_hover_and_drag_cursor(CursorIcon::ResizeVertical)
+        .on_hover_text("Drag to resize. Double-click to fit the input again.");
+
+    let active = response.hovered() || response.dragged();
+    let visuals = ui.style().interact(&response);
+    let line = if active {
+        visuals.fg_stroke
+    } else {
+        ui.visuals().widgets.noninteractive.bg_stroke
+    };
+    let painter = ui.painter();
+    let center = rect.center();
+
+    painter.hline(rect.x_range(), center.y, line);
+    // A grip at the middle.
+    painter.rect_filled(
+        Rect::from_center_size(center, vec2(36., 4.)),
+        2.,
+        if active {
+            visuals.fg_stroke.color
+        } else {
+            visuals.bg_fill
+        },
+    );
+
+    response
 }
 
 // ---------------------------------------------------------------------------------------------
 // Dropdowns with text overrides
 // ---------------------------------------------------------------------------------------------
 
-/// A text box whose contents, when not blank, replace the dropdown to its left.
+/// A text box whose contents, when not blank, replace the dropdown to its left. Narrower where the
+/// row has less room, e.g. in a column.
 pub(super) fn override_box(ui: &mut Ui, custom: &mut String) {
     ui.add(
         TextEdit::singleline(custom)
             .hint_text("Other…")
-            .desired_width(150.),
+            .desired_width(ui.available_width().clamp(60., 150.)),
     )
     .on_hover_text("Anything typed here is used instead of the dropdown's choice.");
 }
@@ -612,7 +689,9 @@ pub(super) fn psi4_properties_field(
 ) -> egui::Response {
     ui.horizontal(|ui| {
         ui.label(label);
-        ui.add(TextEdit::singleline(value).desired_width(300.));
+        // Leave room for the dropdown.
+        let width = ui.available_width() - ui.spacing().combo_width - 30.;
+        ui.add(TextEdit::singleline(value).desired_width(width.clamp(80., 300.)));
 
         let mut names: Vec<String> = value
             .split(',')

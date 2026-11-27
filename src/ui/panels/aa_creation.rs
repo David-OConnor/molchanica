@@ -27,8 +27,6 @@ use crate::{
     util::{handle_err, handle_success, make_egui_color},
 };
 
-/// The amino acid buttons wrap at this width.
-const SECTION_WIDTH: f32 = 800.;
 const SEQ_INPUT_WIDTH: f32 = 400.;
 
 fn is_amino_acid_letter(ch: char) -> bool {
@@ -224,8 +222,8 @@ pub(in crate::ui) fn aa_section(
     section_box().show(ui, |ui| {
         // The toolbar this is in lays out horizontally.
         ui.vertical(|ui| {
-            ui.set_max_width(SECTION_WIDTH);
-
+            // No fixed width: the buttons fill the space the toolbar row leaves this section (up
+            // to the panel's edge) before wrapping.
             ui.horizontal_wrapped(|ui| {
                 for aa in AMINO_ACIDS {
                     if aa == AminoAcid::Sec {

@@ -15,7 +15,7 @@ use crate::{
     nucleic_acid_creation::{ResidueGrouping, base_color, base_letter, group_residues, nucleotide},
     state::State,
     ui::{
-        COLOR_ACTION, ROW_SPACING,
+        COLOR_ACTION, ROW_SPACING, COL_SPACING,
         misc::{section_box, selector},
         util::report_cache_result,
     },
@@ -76,7 +76,6 @@ fn sequence_input(ui: &mut Ui, text: &mut String, na_type: NucleicAcidType, max_
 fn grouping_options(ui: &mut Ui, grouping: &mut ResidueGrouping) {
     use ResidueGrouping::*;
 
-    ui.horizontal_wrapped(|ui| {
         ui.label("Residues");
         let options = [
             (
@@ -104,7 +103,6 @@ fn grouping_options(ui: &mut Ui, grouping: &mut ResidueGrouping) {
         if let Some(selected) = selector(ui, *grouping, &options) {
             *grouping = selected;
         }
-    });
 }
 
 /// Add and manage nucleic acids
@@ -142,7 +140,6 @@ pub(in crate::ui) fn na_section(
                 }
             });
 
-            grouping_options(ui, &mut state.ui.na_residue_grouping);
             ui.add_space(ROW_SPACING);
 
             ui.horizontal(|ui| {
@@ -182,6 +179,9 @@ pub(in crate::ui) fn na_section(
                     create_button("Create", COLOR_ACTION, can_create),
                 );
                 status_label(ui, valid, invalid, "nucleotide");
+
+                ui.add_space(COL_SPACING);
+                grouping_options(ui, &mut state.ui.na_residue_grouping);
 
                 if create.clicked() {
                     let seq: Vec<_> = text
