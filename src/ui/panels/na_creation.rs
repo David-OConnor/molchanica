@@ -15,7 +15,7 @@ use crate::{
     nucleic_acid_creation::{ResidueGrouping, base_color, base_letter, group_residues, nucleotide},
     state::State,
     ui::{
-        COLOR_ACTION, ROW_SPACING, COL_SPACING,
+        COL_SPACING, COLOR_ACTION, ROW_SPACING,
         misc::{section_box, selector},
         util::report_cache_result,
     },
@@ -76,33 +76,33 @@ fn sequence_input(ui: &mut Ui, text: &mut String, na_type: NucleicAcidType, max_
 fn grouping_options(ui: &mut Ui, grouping: &mut ResidueGrouping) {
     use ResidueGrouping::*;
 
-        ui.label("Residues");
-        let options = [
-            (
-                Nucleotide,
-                "Per nt",
-                "Each base and its backbone form a residue.",
-            ),
-            (
-                BasePair,
-                "Per bp",
-                "Both nucleotides of a pair form one residue.",
-            ),
-            (
-                BasesAndBackbones,
-                "Paired bases / bbs",
-                "The paired bases form one residue and their backbones form another.",
-            ),
-            (
-                BaseAndBackbone,
-                "Separate bases / bbs",
-                "Each base and each backbone form separate residues.",
-            ),
-        ];
+    ui.label("Residues");
+    let options = [
+        (
+            Nucleotide,
+            "Per nt",
+            "Each base and its backbone form a residue.",
+        ),
+        (
+            BasePair,
+            "Per bp",
+            "Both nucleotides of a pair form one residue.",
+        ),
+        (
+            BasesAndBackbones,
+            "Paired bases / bbs",
+            "The paired bases form one residue and their backbones form another.",
+        ),
+        (
+            BaseAndBackbone,
+            "Separate bases / bbs",
+            "Each base and each backbone form separate residues.",
+        ),
+    ];
 
-        if let Some(selected) = selector(ui, *grouping, &options) {
-            *grouping = selected;
-        }
+    if let Some(selected) = selector(ui, *grouping, &options) {
+        *grouping = selected;
+    }
 }
 
 /// Add and manage nucleic acids
