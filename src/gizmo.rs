@@ -4,14 +4,17 @@ use std::f32::consts::TAU;
 
 use egui::{Align2, FontFamily};
 use graphics::{
-    Camera, FWD_VEC, OverlayAnchor, OverlayColor, OverlayPrimitive, OverlayStroke, RIGHT_VEC,
-    Scene, UP_VEC, VectorOverlay,
+    Camera, ControlScheme, EngineUpdates, FWD_VEC, OverlayAnchor, OverlayColor, OverlayPrimitive,
+    OverlayStroke, RIGHT_VEC, Scene, UP_VEC, VectorOverlay,
 };
 use lin_alg::f32::{Quaternion, Vec3};
 use mol_defs::molecules::MolType;
 
 use crate::{
+    cam,
     mol_manip::{self, Axis, Constraint, Handle, ManipMode},
+    prefs::DepthMode,
+    render::set_flashlight,
     state::{OperatingMode, State},
 };
 
@@ -23,6 +26,7 @@ const MUTED_COLOR: OverlayColor = (170, 180, 195, 100);
 const HIGHLIGHT: OverlayColor = (255, 225, 90, 255);
 const RING_RADIUS: f32 = 43.;
 const RING_SEGMENTS: usize = 64;
+const CAMERA_INSET: f32 = 72.;
 
 #[derive(Clone, Copy, Debug)]
 struct AxisProjection {
@@ -149,7 +153,7 @@ fn camera_overlay(state: &State, scene: &Scene) -> VectorOverlay {
 
     let scale = state.volatile.mol_manip.pixels_per_point;
     let (x, y, w, _) = viewport_points(scene, scale);
-    let mut overlay = overlay_at(scene, scale, (x + w - 72., y + 70.));
+    let mut overlay = overlay_at(scene, scale, (x + w - CAMERA_INSET, y + 70.));
     overlay.primitives.push(OverlayPrimitive::Circle {
         center: (0., 0.),
         radius: 55.,
@@ -210,6 +214,131 @@ fn camera_overlay(state: &State, scene: &Scene) -> VectorOverlay {
     });
 
     overlay
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PanDrag {
+    pointer: egui::Pos2,
+    depth: f32,
+}
+
+// Selection and transform tools suspend the engine camera controls while active.
+fn pan_controls<'a>(state: &'a mut State, scene: &'a mut Scene) -> &'a mut ControlScheme {
+    if scene.input_settings.control_scheme != ControlScheme::None {
+        &mut scene.input_settings.control_scheme
+    } else if let Some(saved) = &mut state.volatile.region_selection.previous_controls {
+        saved
+    } else {
+        &mut state.volatile.control_scheme_prev
+    }
+}
+
+pub(crate) fn pan_button_rect(scene: &Scene, scale: f32) -> Option<egui::Rect> {
+    let (x, y, w, h) = viewport_points(scene, scale);
+    let viewport = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h));
+    let rect = egui::Rect::from_center_size(
+        egui::pos2(viewport.right() - CAMERA_INSET, viewport.top() + 165.),
+        egui::vec2(46., 24.),
+    );
+    viewport.contains_rect(rect).then_some(rect)
+}
+
+/// A floating egui widget captures the drag outside the button and takes precedence
+/// over the engine's left-drag orbit handler.
+pub(crate) fn pan_control(
+    state: &mut State,
+    scene: &mut Scene,
+    ctx: &egui::Context,
+    updates: &mut EngineUpdates,
+) {
+    let scale = ctx.pixels_per_point();
+    let Some(rect) = pan_button_rect(scene, scale) else {
+        state.ui.pan_drag = None;
+        return;
+    };
+    let response = egui::Area::new(egui::Id::new("camera_pan"))
+        .fixed_pos(rect.min)
+        .default_size(rect.size())
+        .movable(false)
+        .show(ctx, |ui| {
+            ui.add(
+                egui::Button::new("Pan")
+                    .min_size(rect.size())
+                    .sense(egui::Sense::drag()),
+            )
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Left-drag to pan the viewport")
+        })
+        .inner;
+
+    let primary = egui::PointerButton::Primary;
+    let dragging = response.dragged_by(primary);
+    if !ctx.input(|i| i.focused) || !(dragging || response.drag_stopped_by(primary)) {
+        state.ui.pan_drag = None;
+        return;
+    }
+    if dragging {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    if response.drag_started_by(primary)
+        && let Some(pointer) = ctx.input(|i| i.pointer.press_origin())
+    {
+        let center = match *pan_controls(state, scene) {
+            ControlScheme::Arc { center } => center,
+            _ => crate::util::orbit_center(state),
+        };
+        let forward = scene.camera.orientation.rotate_vec(FWD_VEC);
+        let depth = (center - scene.camera.position).dot(forward);
+        state.ui.pan_drag = Some(PanDrag {
+            pointer,
+            depth: if depth > 0. {
+                depth
+            } else {
+                cam::MOVE_TO_CAM_DIST
+            },
+        });
+    }
+    // The release and subsequent pointer motion can arrive in the same frame.
+    let pointer = ctx.input(|i| {
+        if dragging {
+            i.pointer.interact_pos()
+        } else {
+            i.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed: false,
+                    ..
+                } if *button == primary => Some(*pos),
+                _ => None,
+            })
+        }
+    });
+    if let Some(drag) = &mut state.ui.pan_drag
+        && let Some(pointer) = pointer
+        && pointer != drag.pointer
+    {
+        let delta = pointer - drag.pointer;
+        drag.pointer = pointer;
+        let height = viewport_points(scene, scale).3;
+        let units_per_point = 2. * drag.depth * (scene.camera.fov_y * 0.5).tan() / height;
+        let local = Vec3::new(-delta.x * scene.camera.screen_x_sign(), delta.y, 0.);
+        let offset = scene.camera.orientation.rotate_vec(local) * units_per_point;
+        scene.camera.position += offset;
+        if let ControlScheme::Arc { center } = pan_controls(state, scene) {
+            *center += offset;
+        }
+        state.ui.cam_snapshot = None;
+        if state.to_save.depth_mode == DepthMode::Auto {
+            cam::set_fog(state, &mut scene.camera);
+        }
+        set_flashlight(scene);
+        updates.camera = true;
+        updates.lighting = true;
+    }
+    if !dragging {
+        state.ui.pan_drag = None;
+    }
 }
 
 fn add_rotation_rings(
@@ -547,7 +676,7 @@ pub(crate) fn hit_test(state: &State, scene: &Scene, cursor: (f32, f32)) -> Opti
         return None;
     }
 
-    let camera_p = (cursor.0 - (x + w - 72.), cursor.1 - (y + 70.));
+    let camera_p = (cursor.0 - (x + w - CAMERA_INSET), cursor.1 - (y + 70.));
     let mut axes = project_axes(&scene.camera, Quaternion::new_identity());
     axes.sort_by(|a, b| a.view.z.total_cmp(&b.view.z));
     let mut ends: Vec<_> = axes
@@ -684,4 +813,86 @@ pub(crate) fn ring_drag_delta(
     ((q.0 - p.0) * tangent.0 + (q.1 - p.1) * tangent.1)
         / magnitude_2d(tangent).max(1.0e-3)
         / RING_RADIUS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pan_drag_tracks_pointer_and_keeps_orbit_radius() {
+        check_pan_drag(
+            ControlScheme::Arc {
+                center: Vec3::new_zero(),
+            },
+            2.,
+        );
+    }
+
+    #[test]
+    fn pan_drag_tracks_pointer_in_free_camera() {
+        check_pan_drag(ControlScheme::FreeCamera, 1.);
+    }
+
+    fn check_pan_drag(scheme: ControlScheme, scale: f32) {
+        let mut state = State::default();
+        let mut scene = Scene::default();
+        let ctx = egui::Context::default();
+        ctx.set_pixels_per_point(scale);
+        let center = Vec3::new_zero();
+        scene.input_settings.control_scheme = scheme;
+        let size = egui::vec2(scene.window_size.0, scene.window_size.1) / scale;
+        scene.camera.orientation = Quaternion::from_axis_angle(UP_VEC, 1.2);
+        scene.camera.aspect = scene.window_size.0 / scene.window_size.1;
+        scene.camera.update_proj_mat();
+        let start = -scene.camera.orientation.rotate_vec(FWD_VEC) * 30.;
+        scene.camera.position = start;
+        let button = pan_button_rect(&scene, scale).unwrap().center();
+        let end = button + egui::vec2(-100., 60.);
+        let click = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Default::default(),
+        };
+        let mut frame = |events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    pan_control(
+                        &mut state,
+                        &mut scene,
+                        ui.ctx(),
+                        &mut EngineUpdates::default(),
+                    )
+                },
+            );
+            output.textures_delta.clear();
+        };
+        frame(vec![]);
+        frame(vec![egui::Event::PointerMoved(button)]);
+        assert!(ctx.egui_wants_pointer_input());
+        frame(vec![click(button, true)]);
+        frame(vec![egui::Event::PointerMoved(button.lerp(end, 0.5))]);
+        frame(vec![
+            egui::Event::PointerMoved(end),
+            click(end, false),
+            egui::Event::PointerMoved(button),
+        ]);
+
+        let (_, (x, y, _)) = scene.camera.in_view(center);
+        assert!((x * size.x * 0.5 + 100.).abs() < 0.001);
+        assert!((-y * size.y * 0.5 - 60.).abs() < 0.001);
+        match scene.input_settings.control_scheme {
+            ControlScheme::Arc { center: pivot } => {
+                assert!((scene.camera.position - pivot - start).magnitude() < 0.001);
+            }
+            controls => assert_eq!(controls, scheme),
+        }
+        assert!(state.ui.pan_drag.is_none());
+    }
 }

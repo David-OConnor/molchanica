@@ -27,7 +27,7 @@ pub(crate) struct RegionSelection {
     pub(crate) tool: RegionTool,
     pub(crate) through: bool,
     pub(crate) points: Vec<(f32, f32)>,
-    previous_controls: Option<ControlScheme>,
+    pub(crate) previous_controls: Option<ControlScheme>,
     add: bool,
     subtract: bool,
     radius: f64,

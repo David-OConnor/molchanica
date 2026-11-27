@@ -566,6 +566,14 @@ fn redraw_inplace_helper(
 }
 
 fn begin_left_drag(state: &mut State, scene: &mut Scene, updates: &mut EngineUpdates) -> bool {
+    // A press can reach the native handler before egui sees the latest pointer position.
+    let scale = state.volatile.mol_manip.pixels_per_point;
+    if let Some((x, y)) = state.ui.cursor_pos
+        && crate::gizmo::pan_button_rect(scene, scale)
+            .is_some_and(|rect| rect.contains(egui::pos2(x / scale, y / scale)))
+    {
+        return false;
+    }
     if crate::region_select::begin(state) {
         return true;
     }
@@ -601,7 +609,9 @@ fn handle_mouse_button(
             state.ui.left_click_down = match btn_state {
                 ElementState::Pressed => begin_left_drag(state, scene, updates),
                 ElementState::Released => {
-                    if !crate::region_select::finish(state, scene, redraw) {
+                    if state.ui.left_click_down
+                        && !crate::region_select::finish(state, scene, redraw)
+                    {
                         mol_manip::finish_drag(state, redraw);
                     }
                     false

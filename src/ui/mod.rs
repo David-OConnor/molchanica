@@ -1002,6 +1002,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
     let mut redraw = RedrawFlags::default();
     crate::inputs::handle_ui_interactions(state, scene, ui.ctx(), &mut redraw, &mut updates);
+    crate::gizmo::pan_control(state, scene, ui.ctx(), &mut updates);
 
     if state.refresh_force_fields() {
         ui.request_repaint();

@@ -704,6 +704,7 @@ pub struct StateUi {
     pub join_ligand: Option<crate::split_join::JoinLigand>,
     pub left_click_down: bool,
     pub middle_click_down: bool,
+    pub(crate) pan_drag: Option<crate::gizmo::PanDrag>,
     pub mouse_in_window: bool,
     /// For the arc/orbit cam only.
     pub orbit_selected_atom: bool,

@@ -183,6 +183,7 @@ Most of this functionality is also available in the GUI, and you can find hotkey
 #### Mouse controls:
 
 - Hold the **left mouse button while dragging** to rotate the camera in pitch and yaw.
+- Left-drag **Pan** beneath the viewport compass to move the scene with the pointer. In Arc mode the orbit center moves with the camera.
 - Hold the **middle mouse button while dragging** to move the camera left, right, up, and down.
 - **Scroll** to move the camera forward and backwards.
 - **Scroll while holding left mouse button** to roll.
