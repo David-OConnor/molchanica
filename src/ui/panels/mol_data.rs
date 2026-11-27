@@ -221,7 +221,7 @@ pub(in crate::ui) fn selected_data_mol_editor(state: &State, selection: &Selecti
         .as_ref()
         .map(|general| merge_params(general, &state.mol_editor.md.mol_specific_params));
 
-    ui.horizontal(|ui| match selection {
+    ui.horizontal_wrapped(|ui| match selection {
         Selection::AtomLig((_, atom_i)) => {
             let Some(atom) = mol.common.get_atom(*atom_i) else {
                 return;
@@ -273,7 +273,7 @@ pub(in crate::ui) fn selected_data_mol_editor(state: &State, selection: &Selecti
 
 /// Display text of the selected atom or residue.
 pub(in crate::ui) fn selected_data(state: &State, selection: &Selection, ui: &mut Ui) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         match selection {
             Selection::Atoms(objects) => {
                 let count: usize = objects.iter().map(|o| o.atoms.len()).sum();
@@ -912,7 +912,7 @@ pub(in crate::ui) fn display_mol_data(
     redraw_lig: &mut bool,
     updates: &mut EngineUpdates,
 ) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let Some((active_mol_type, active_mol_i)) = state.volatile.active_mol else {
             return;
         };

@@ -1,8 +1,8 @@
 //! Misc utility-related UI functionality.
 
 use egui::{
-    Color32, CornerRadius, CursorIcon, Frame, Label, Margin, Response, RichText, Sense, Slider,
-    Stroke, Ui,
+    AsIdSalt, Color32, CornerRadius, CursorIcon, Frame, Id, Label, Margin, Response, RichText,
+    Sense, Slider, Stroke, Ui,
 };
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 /// Unselected options of a selector; a slight orange hue distinguishes them from plain labels.
@@ -130,7 +130,7 @@ pub fn selector<T: PartialEq + Copy>(
 ) -> Option<T> {
     let mut result = None;
 
-    selector_box().show(ui, |ui| {
+    let add_options = |ui: &mut Ui| {
         for (val, label, tooltip) in options {
             if selector_option(ui, *val == current, *label)
                 .on_hover_text(*tooltip)
@@ -140,7 +140,49 @@ pub fn selector<T: PartialEq + Copy>(
                 result = Some(*val);
             }
         }
-    });
+    };
+
+    // In a wrapping row, keep the options together on one line, and move the whole box to the
+    // next row if it doesn't fit. Otherwise, the box is squeezed into what's left of the row.
+    if ui.layout().main_wrap() && ui.layout().is_horizontal() {
+        let id_salt = options
+            .iter()
+            .fold(Id::new("selector"), |id, (_, label, _)| id.with(label));
+
+        wrapped_section(ui, id_salt, |ui| {
+            selector_box().show(ui, |ui| ui.horizontal(add_options));
+        });
+    } else {
+        selector_box().show(ui, add_options);
+    }
 
     result
+}
+
+/// Draw a section, e.g. a framed group of widgets, as one item of a wrapping layout
+/// (`horizontal_wrapped`), starting a new row if it won't fit on this one.
+///
+/// egui wraps widgets, but not containers: it doesn't know their size until they're drawn, so
+/// it squeezes them into what's left of the row, and they overflow it if they can't shrink that
+/// far. An overflowing item also widens the UI it's in, so every later row then wraps past the
+/// edge of the window. We use the section's width from the previous frame.
+pub fn wrapped_section<R>(
+    ui: &mut Ui,
+    id_salt: impl AsIdSalt,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let id = ui.id().with(id_salt);
+    let width_prev: Option<f32> = ui.data(|d| d.get_temp(id));
+
+    // The same test egui uses for widgets. Ending a row with nothing on it would leave a gap.
+    let row_start = ui.cursor().left() <= ui.max_rect().left();
+
+    if !row_start && width_prev.is_some_and(|w| w > ui.available_size_before_wrap().x) {
+        ui.end_row();
+    }
+
+    let resp = ui.scope(add_contents);
+    ui.data_mut(|d| d.insert_temp(id, resp.response.rect.width()));
+
+    resp.inner
 }

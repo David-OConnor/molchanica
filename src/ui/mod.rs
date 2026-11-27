@@ -122,6 +122,9 @@ pub const _COLOR_POPUP: Color32 = Color32::from_rgb(20, 20, 30);
 // Number of characters to display. E.g. the molecular description. Often long.
 const MAX_TITLE_LEN: usize = 40;
 
+/// Below this much room left on its row, the selected atom or residue's data starts a new one.
+const SEL_DATA_WIDTH_MIN: f32 = 250.;
+
 /// Update the tilebar to reflect the current molecule
 fn set_window_title(title: &str, scene: &mut Scene) {
     scene.window_title = title.to_owned();
@@ -320,7 +323,7 @@ fn draw_cli(
         ui.label(RichText::new(&state.ui.cmd_line_output).color(color));
     });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("In: ");
         let edit_resp = ui.add(
             TextEdit::singleline(&mut state.ui.cmd_line_input)
@@ -732,10 +735,13 @@ fn misc_view_options(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
         });
 
         if state.ui.selection != Selection::None {
+            // The selection data wraps to fit what's left of the row, but not into a sliver.
+            if ui.available_size_before_wrap().x < SEL_DATA_WIDTH_MIN {
+                ui.end_row();
+            }
+
             section_box().show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    mol_data::selected_data(state, &state.ui.selection, ui);
-                });
+                mol_data::selected_data(state, &state.ui.selection, ui);
             });
         }
     });
@@ -1041,7 +1047,7 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         );
 
         if state.volatile.active_mol.is_some() || state.ligands.len() >= 2 {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 section_box().show(ui, |ui| {
                     if state.volatile.active_mol.is_some() {
                         display_mol_data(
@@ -1291,8 +1297,9 @@ fn query_input(
     };
 
     let query_help = "Download and view a molecule from databases including RCSB PDB, PDBe, \
-        PubChem, DrugBank, ChEBI, UniProt, AlphaFold DB, etc. Prefix with `pdbe:` or `chebi:` to \
-        query only that database.";
+        PubChem, DrugBank, ChEBI, UniProt, AlphaFold DB, etc. Enter an identifier, or a name, e.g. \
+        aspirin, or IL-10 for a protein. Prefix with `pdbe:` or `chebi:` to query only that \
+        database.";
     ui.label(RichText::new("Query:").color(color_open_tools))
         .on_hover_text(query_help);
 

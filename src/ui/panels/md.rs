@@ -409,7 +409,7 @@ fn run_picker(
     let running = md::runs::running(state);
     let mut run = false;
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(!running, |ui| {
             run = button!(
                 ui,

@@ -597,13 +597,15 @@ fn import_controls(state: &mut State, ui: &mut Ui) {
     }
 }
 
+/// `reserved` is this frame's UI size, in EGUI points.
 pub(crate) fn measurement_viewport(
     scene: &Scene,
     reserved: (f32, f32),
     pixels_per_point: f32,
 ) -> (graphics::Camera, egui::Rect) {
+    // The window size is in physical pixels.
     let (x, y, width, height) = graphics::viewport_rect(
-        reserved,
+        (reserved.0 * pixels_per_point, reserved.1 * pixels_per_point),
         scene.window_size.0 as u32,
         scene.window_size.1 as u32,
         &graphics::UiSettings::default(),

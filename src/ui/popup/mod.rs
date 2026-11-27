@@ -776,7 +776,7 @@ pub(in crate::ui) fn metadata_popup(
 
             if let Some(idents_) = idents {
                 ui.add_space(ROW_SPACING);
-                result.name = list_idents(Some(src.name), idents_, src.path, prefs_dir, ui);
+                result.name = list_idents(Some(src.name), None, idents_, src.path, prefs_dir, ui);
             } else {
                 result.name = edit_mol_name(src.name, ui);
             }
@@ -809,7 +809,7 @@ fn metadata_editor(
     ui.add_space(ROW_SPACING);
 
     if let Some(idents_) = idents {
-        let _ = list_idents(None, idents_, src.path, prefs_dir, ui);
+        let _ = list_idents(None, None, idents_, src.path, prefs_dir, ui);
         ui.add_space(ROW_SPACING);
     }
 

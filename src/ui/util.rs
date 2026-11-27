@@ -122,15 +122,21 @@ impl<'a> Idents<'a> {
 }
 
 /// Display a molecule's identifiers and, when supplied, an editable name above them.
+/// `description`, e.g. a protein's structure title, is shown in full below the name.
 /// Returns only changes to the name; the caller applies them after releasing molecule borrows.
 pub(in crate::ui) fn list_idents(
     name: Option<&Option<String>>,
+    description: Option<&str>,
     idents: Idents,
     path: &Option<PathBuf>,
     prefs_dir: &Path,
     ui: &mut Ui,
 ) -> Option<Option<String>> {
     let name_change = name.and_then(|name| edit_mol_name(name, ui));
+
+    if let Some(descrip) = description {
+        ident_row("Description", descrip.to_owned(), false, ui);
+    }
 
     if let Some(p) = path {
         ui.horizontal_wrapped(|ui| {
@@ -975,10 +981,16 @@ pub(in crate::ui) fn open_chebi_download(
     Ok(())
 }
 
+/// How many proteins to find by name: we load the closest, and list the others.
+const PROTEIN_NAME_MATCHES: u32 = 5;
+
 enum QueryRequest {
     Protein(CifSource, String),
     Uniprot(String),
+    /// A protein's name, e.g. "IL-10" or "Interleukin-10".
+    ProteinSearch(String),
     PubchemCid(u32),
+    /// A small molecule's name, falling back to a protein's.
     PubchemSearch(String),
     Chebi(u32),
     PdbeLigand(String),
@@ -1011,7 +1023,8 @@ pub(crate) enum QueryResult {
         input: String,
         mol: MoleculeSmall,
     },
-    NoResults,
+    /// Holds a message saying where we looked.
+    NoResults(String),
     Error(String),
 }
 
@@ -1030,54 +1043,24 @@ fn start_query(state: &mut State, request: QueryRequest) {
 fn run_query(request: QueryRequest) -> QueryResult {
     match request {
         QueryRequest::Protein(source, ident) => protein_query(source, ident, None),
-        QueryRequest::Uniprot(input) => {
-            let accession = uniprot::parse_accession(&input);
-            let pdb_ids = match uniprot::best_pdb_ids(&accession) {
-                Ok(ids) => ids,
-                Err(error) => {
-                    return QueryResult::Error(format!(
-                        "Error finding structures of UniProt {accession}. Is the accession correct? \
-                         {error:?}"
-                    ));
-                }
-            };
-
-            if let Some(pdb_id) = pdb_ids.first() {
-                protein_query(
-                    CifSource::Rcsb,
-                    pdb_id.clone(),
-                    Some(format!(
-                        "Loaded {}, the best of {} experimental structures of UniProt \
-                         {accession} by sequence coverage and resolution, from RCSB \
-                         (over the internet)",
-                        pdb_id.to_uppercase(),
-                        pdb_ids.len(),
-                    )),
-                )
-            } else {
-                protein_query(
-                    CifSource::AlphaFold,
-                    accession.clone(),
-                    Some(format!(
-                        "UniProt {accession} has no experimental structures; loaded its predicted \
-                         structure from AlphaFold DB (over the internet)"
-                    )),
-                )
-            }
-        }
+        QueryRequest::Uniprot(input) => uniprot_query(&uniprot::parse_accession(&input), None),
+        QueryRequest::ProteinSearch(name) => protein_name_query(&name),
         QueryRequest::PubchemCid(cid) => pubchem_query(cid, cid.to_string(), None),
         QueryRequest::PubchemSearch(input) => {
-            let cids = match find_cids_from_search(&input, false) {
-                Ok(cids) => cids,
-                Err(error) => {
-                    return QueryResult::Error(format!(
-                        "Error finding a mol from Pubchem {error:?}"
-                    ));
-                }
-            };
+            // PubChem reports a name it doesn't know as an error.
+            let cids = find_cids_from_search(&input, false).unwrap_or_default();
+
             let Some(&cid) = cids.first() else {
-                return QueryResult::NoResults;
+                // Proteins are mostly absent from PubChem's compound database, e.g. IL-10. So,
+                // try the name as a protein's.
+                return match protein_name_query(&input) {
+                    QueryResult::NoResults(_) => QueryResult::NoResults(format!(
+                        "No molecule or protein named \"{input}\" found on PubChem or UniProt"
+                    )),
+                    protein => protein,
+                };
             };
+
             let cids_str = cids
                 .iter()
                 .map(u32::to_string)
@@ -1178,6 +1161,94 @@ fn protein_query(source: CifSource, ident: String, message: Option<String>) -> Q
     }
 }
 
+/// Load the best experimental structure of a UniProt entry, or its AlphaFold DB prediction if it
+/// has none. `context`, e.g. how we found the entry, starts the success message.
+fn uniprot_query(accession: &str, context: Option<String>) -> QueryResult {
+    let pdb_ids = match uniprot::best_pdb_ids(accession) {
+        Ok(ids) => ids,
+        Err(error) => {
+            return QueryResult::Error(format!(
+                "Error finding structures of UniProt {accession}. Is the accession correct? \
+                 {error:?}"
+            ));
+        }
+    };
+
+    let (source, ident, message) = match pdb_ids.first() {
+        Some(pdb_id) => (
+            CifSource::Rcsb,
+            pdb_id.clone(),
+            format!(
+                "Loaded {}, the best of {} experimental structures of UniProt {accession} by \
+                 sequence coverage and resolution, from RCSB (over the internet)",
+                pdb_id.to_uppercase(),
+                pdb_ids.len(),
+            ),
+        ),
+        None => (
+            CifSource::AlphaFold,
+            accession.to_owned(),
+            format!(
+                "UniProt {accession} has no experimental structures; loaded its predicted \
+                 structure from AlphaFold DB (over the internet)"
+            ),
+        ),
+    };
+
+    let message = match context {
+        Some(context) => format!("{context}. {message}"),
+        None => message,
+    };
+
+    protein_query(source, ident, Some(message))
+}
+
+/// Find a protein by name on UniProt, preferring human ones, and load the structure of the closest
+/// match. We list the next-closest in the message, so the user can pick one instead.
+fn protein_name_query(name: &str) -> QueryResult {
+    let proteins =
+        match uniprot::search_by_name(name, Some(uniprot::TAXON_HUMAN), PROTEIN_NAME_MATCHES) {
+            Ok(proteins) => proteins,
+            Err(error) => {
+                return QueryResult::Error(format!(
+                    "Error searching UniProt for a protein named \"{name}\": {error:?}"
+                ));
+            }
+        };
+
+    let Some((best, others)) = proteins.split_first() else {
+        return QueryResult::NoResults(format!("No protein named \"{name}\" found on UniProt"));
+    };
+
+    let organism = best
+        .organism
+        .as_ref()
+        .map(|o| o.scientific_name.as_str())
+        .unwrap_or("unknown organism");
+    let context = format!("Found {} ({organism}) for \"{name}\"", best.name());
+
+    let mut result = uniprot_query(&best.primary_accession, Some(context));
+
+    if let QueryResult::Protein {
+        message: Some(message),
+        ..
+    } = &mut result
+        && !others.is_empty()
+    {
+        let others: Vec<_> = others
+            .iter()
+            .map(|p| format!("{} ({})", p.entry_name, p.primary_accession))
+            .collect();
+
+        message.push_str(&format!(
+            ". Other matches: {}. Enter an accession to load that protein instead",
+            others.join(", ")
+        ));
+    }
+
+    result
+}
+
 fn pubchem_query(cid: u32, query: String, message: Option<String>) -> QueryResult {
     match load_sdf_pubchem(cid) {
         Ok(downloaded) => QueryResult::Small {
@@ -1275,9 +1346,7 @@ pub(crate) fn apply_query_result(
                 "Built this molecule from the SMILES entered; no database".to_owned(),
             );
         }
-        QueryResult::NoResults => {
-            handle_success(&mut state.ui, "No results found on Pubchem".to_owned());
-        }
+        QueryResult::NoResults(message) => handle_success(&mut state.ui, message),
         QueryResult::Error(error) => handle_err(&mut state.ui, error),
     }
 }
@@ -1492,13 +1561,30 @@ pub(in crate::ui) fn load_mol_from_query(
         return;
     }
 
-    // PubChem name search.
+    // Name searches: small molecules on PubChem, and proteins on UniProt.
     let is_prefixed_database_query = inp_l.starts_with("pdb_") || inp_l.starts_with("db");
     if inp.len() >= QUERY_ENTER_LEN_MIN && !is_prefixed_database_query {
         let is_tgt = enter_tgt == EnterTarget::PubchemSearch;
-        let button_clicked = query_btn(ui, "Search PubChem", is_tgt).clicked();
+        let button_clicked = query_btn(ui, "Search PubChem", is_tgt)
+            .on_hover_text(
+                "Find a small molecule by name on PubChem. If it has none by this name, find a \
+                 protein instead, as with Search proteins.",
+            )
+            .clicked();
         if button_clicked || (enter_pressed && is_tgt) {
             start_query(state, QueryRequest::PubchemSearch(inp.to_owned()));
+        }
+
+        if query_btn(ui, "Search proteins", false)
+            .on_hover_text(
+                "Find a protein by name on UniProt, e.g. IL-10 or Interleukin-10, preferring human \
+                 ones. Loads the best experimental structure of the closest match from the PDB, \
+                 ranked by sequence coverage, then resolution; or its AlphaFold DB prediction if \
+                 it has none.",
+            )
+            .clicked()
+        {
+            start_query(state, QueryRequest::ProteinSearch(inp.to_owned()));
         }
     }
 }

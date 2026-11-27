@@ -137,13 +137,7 @@ fn add_axis(
 }
 
 fn overlay_at(scene: &Scene, scale: f32, point: (f32, f32)) -> VectorOverlay {
-    let (x, y, _, _) = graphics::viewport_rect(
-        scene.gui_size,
-        (scene.window_size.0 / scale).round() as u32,
-        (scene.window_size.1 / scale).round() as u32,
-        &graphics::UiSettings::default(),
-        scale,
-    );
+    let (x, y, _, _) = viewport_points(scene, scale);
     let mut overlay = VectorOverlay::new(OverlayAnchor::ViewportTopLeft);
     overlay.offset = (point.0 - x, point.1 - y);
 
@@ -520,6 +514,7 @@ fn segment_distance(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     magnitude_2d((p.0 - a.0 - t * v.0, p.1 - a.1 - t * v.1))
 }
 
+/// The 3D viewport, in EGUI points. `scene.gui_size` and `scene.window_size` are physical pixels.
 pub(crate) fn viewport_points(scene: &Scene, scale: f32) -> (f32, f32, f32, f32) {
     let (x, y, w, h) = graphics::viewport_rect(
         scene.gui_size,

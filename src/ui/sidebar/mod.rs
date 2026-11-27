@@ -575,6 +575,7 @@ pub(in crate::ui) fn sidebar(
                         ui.add_space(ROW_SPACING);
                         list_idents(
                             Some(&mol.common.name),
+                            None,
                             Idents::Small(&mol.idents),
                             &mol.common.path,
                             &state.volatile.prefs_dir,
@@ -583,8 +584,10 @@ pub(in crate::ui) fn sidebar(
                     }
                     Some(MolGenericRef::Peptide(mol)) => {
                         ui.add_space(ROW_SPACING);
+                        // The same description the main panel shows, but untruncated.
                         list_idents(
                             Some(&mol.common.name),
+                            mol.common.metadata.get("_struct.title").map(String::as_str),
                             Idents::Peptide(&mol.idents),
                             &mol.common.path,
                             &state.volatile.prefs_dir,

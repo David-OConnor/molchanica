@@ -603,7 +603,7 @@ pub(in crate::ui) fn standalone_sequence(
     let mut peptide = false;
     let mut folded = false;
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(format!("{name} ({seq_type})")).color(Color32::WHITE));
 
         if state.ui.sequence_edit.target != Some(i) {

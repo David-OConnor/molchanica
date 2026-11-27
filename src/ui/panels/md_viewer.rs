@@ -101,7 +101,7 @@ pub(in crate::ui) fn playback_status(
         return;
     }
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         clear_traj_btn(state, scene, updates, redraw, ui);
 
         let viewer = &state.volatile.md_local.viewer;
@@ -163,7 +163,7 @@ pub(in crate::ui) fn playback(
     }
 
     // --- Controls row ---
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         clear_traj_btn(state, scene, updates, redraw, ui);
 
         ui.add_space(COL_SPACING);
