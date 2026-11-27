@@ -23,7 +23,7 @@ use crate::{
     },
     ui::{
         COLOR_ACTION, COLOR_AMBER, ROW_SPACING,
-        misc::{selector_box, selector_option},
+        misc::{resizable_text_edit, selector_box, selector_option},
         popup::flex_lists::PageLists,
     },
 };
@@ -210,7 +210,7 @@ pub(in crate::ui::popup) fn form_ui(
             }
 
             let top = ui.min_rect().bottom();
-            input_preview_ui(&mut form.preview, "orca_input_preview", height, ui);
+            input_preview_ui(&form.preview, "orca_input_preview", height, ui);
             height -= ui.min_rect().bottom() - top;
 
             // Decided outside the scroll area, so its scroll bar coming and going can't flip it.
@@ -248,18 +248,14 @@ pub(in crate::ui::popup) fn form_ui(
                     .small(),
             );
 
-            ScrollArea::vertical()
-                .id_salt("orca_text_scroll")
-                .max_height((height - 40.).max(100.))
-                .auto_shrink([true, false])
-                .show(ui, |ui| {
-                    ui.add(
-                        TextEdit::multiline(&mut form.text)
-                            .code_editor()
-                            .desired_rows(20)
-                            .desired_width(f32::INFINITY),
-                    );
-                });
+            // Up to the window's height, less the lines above and the drag bar.
+            let max_height = (height - 52.).max(100.);
+            let editor = TextEdit::multiline(&mut form.text)
+                .code_editor()
+                .desired_rows(20)
+                .desired_width(f32::INFINITY);
+            let id = ui.make_persistent_id("orca_text");
+            resizable_text_edit(ui, id, editor, max_height, max_height);
         }
         InputMode::Upload => {
             ui.horizontal(|ui| {

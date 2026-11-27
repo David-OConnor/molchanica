@@ -1,8 +1,8 @@
 //! Misc utility-related UI functionality.
 
 use egui::{
-    AsIdSalt, Color32, CornerRadius, CursorIcon, Frame, Id, Label, Margin, Response, RichText,
-    Sense, Slider, Stroke, Ui, UiBuilder,
+    AsIdSalt, Color32, CornerRadius, CursorIcon, Frame, Id, Label, Margin, Rect, Response,
+    RichText, ScrollArea, Sense, Slider, Stroke, TextEdit, Ui, UiBuilder, vec2,
 };
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 /// Unselected options of a selector; a slight orange hue distinguishes them from plain labels.
@@ -209,4 +209,84 @@ pub fn wrapped_section<R>(
     ui.data_mut(|d| d.insert_temp(id, resp.response.rect.width()));
 
     resp.inner
+}
+
+/// A resizable text box is never dragged shorter than this.
+const RESIZE_MIN_HEIGHT: f32 = 40.;
+
+/// A text box in its own scroll area, with a bar beneath it to drag its height by, like a
+/// resizable text area. Until dragged, it fits its text, up to `fit_height`; double-clicking the
+/// bar returns it to that. Dragging stops at `max_height`. The dragged height is kept under `id`,
+/// for the session.
+pub fn resizable_text_edit(
+    ui: &mut Ui,
+    id: Id,
+    editor: TextEdit,
+    fit_height: f32,
+    max_height: f32,
+) -> Response {
+    let max_height = max_height.max(RESIZE_MIN_HEIGHT);
+    let dragged: Option<f32> = ui.data(|data| data.get_temp(id));
+    let height = match dragged {
+        Some(height) => height.clamp(RESIZE_MIN_HEIGHT, max_height),
+        None => fit_height.min(max_height),
+    };
+
+    let output = ScrollArea::vertical()
+        .id_salt(id.with("scroll"))
+        .max_height(height)
+        .auto_shrink([false, dragged.is_none()])
+        .show(ui, |ui| {
+            if dragged.is_some() {
+                // Fill the area, rather than end in blank space below short text.
+                ui.add(editor.min_size(vec2(0., height)))
+            } else {
+                ui.add(editor)
+            }
+        });
+    let area = output.inner_rect;
+
+    let handle = resize_handle(ui, id.with("handle"));
+    if handle.dragged()
+        && let Some(pointer) = handle.interact_pointer_pos()
+    {
+        // Keep the bar's middle under the pointer.
+        let offset = handle.rect.center().y - area.bottom();
+        let height = (pointer.y - offset - area.top()).clamp(RESIZE_MIN_HEIGHT, max_height);
+        ui.data_mut(|data| data.insert_temp(id, height));
+    }
+    if handle.double_clicked() {
+        ui.data_mut(|data| data.remove::<f32>(id));
+    }
+
+    output.inner
+}
+
+/// A full-width bar, with a grip at its middle, to drag the height of what's above it by.
+pub fn resize_handle(ui: &mut Ui, id: Id) -> Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.), Sense::hover());
+    let response = ui
+        .interact(rect, id, Sense::click_and_drag())
+        .on_hover_and_drag_cursor(CursorIcon::ResizeVertical)
+        .on_hover_text("Drag to resize. Double-click to fit the text again.");
+
+    let active = response.hovered() || response.dragged();
+    let visuals = ui.style().interact(&response);
+    let line = if active {
+        visuals.fg_stroke
+    } else {
+        ui.visuals().widgets.noninteractive.bg_stroke
+    };
+    let grip = if active {
+        visuals.fg_stroke.color
+    } else {
+        visuals.bg_fill
+    };
+    let center = rect.center();
+
+    let painter = ui.painter();
+    painter.hline(rect.x_range(), center.y, line);
+    painter.rect_filled(Rect::from_center_size(center, vec2(36., 4.)), 2., grip);
+
+    response
 }

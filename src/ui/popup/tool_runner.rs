@@ -47,7 +47,7 @@ use crate::{
     state::{ComputationGuard, ComputationType, Computations, State},
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_AMBER, COLOR_HIGHLIGHT, ROW_SPACING,
-        misc::{selector_box, selector_option},
+        misc::{self, selector_box, selector_option},
         util::open_dir,
     },
     util::handle_err,
@@ -1412,7 +1412,7 @@ impl ToolWindow {
                 let space =
                     ui.available_height() - self.footer_height - ui.spacing().item_spacing.y;
                 quantum_chem::input_preview_ui(
-                    &mut self.psi4_preview.preview,
+                    &self.psi4_preview.preview,
                     "psi4_input_preview",
                     space,
                     ui,
@@ -2619,6 +2619,7 @@ fn fields_ui(
                                     pick_sequence,
                                     use_sequence,
                                     use_active_mol,
+                                    height,
                                     ui,
                                 );
                             });
@@ -2726,6 +2727,8 @@ fn draw_field(
     pick_sequence: &mut Option<SequenceTarget>,
     use_sequence: &mut Option<(SequenceTarget, usize)>,
     use_active_mol: &mut bool,
+    // The height of the form's scroll area.
+    form_height: f32,
     ui: &mut Ui,
 ) {
     if field.managed_by_runner {
@@ -2818,10 +2821,20 @@ fn draw_field(
             }
             let rows = field.rows.unwrap_or(3);
             let editor = TextEdit::multiline(value).desired_width(f32::INFINITY);
-            if tool == Tool::Psi4 {
-                ui.add(editor.code_editor().desired_rows(rows.max(2)))
+            let editor = if tool == Tool::Psi4 {
+                editor.code_editor().desired_rows(rows.max(2))
             } else {
-                ui.add(editor.desired_rows(rows.clamp(2, 12)))
+                editor.desired_rows(rows.clamp(2, 12))
+            };
+
+            // A text mode's input, e.g. Enter JSON: the form's main box, so it resizes. It grows
+            // with its text up to the form's height, less room for its label and drag bar.
+            if field.input_modes == "text" {
+                let max_height = (form_height - 52.).max(100.);
+                let id = ui.make_persistent_id("text_input_height");
+                misc::resizable_text_edit(ui, id, editor, max_height, max_height)
+            } else {
+                ui.add(editor)
             }
         }
         FieldKind::Molecules => {
