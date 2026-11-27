@@ -13,7 +13,7 @@ use crate::{
     ui::{
         COL_SPACING, COLOR_ACTION, COLOR_ACTIVE, COLOR_HIGHLIGHT, COLOR_REMOVE, ROW_SPACING,
         highlighted_box,
-        misc::{selector_box, selector_option},
+        misc::{selector_box, selector_option, wrap_together},
         num_field,
         panels::md_gromacs::text_width,
     },
@@ -199,15 +199,17 @@ pub(in crate::ui) fn playback(
             );
 
         // Playback speed slider (snapshots per second)
-        ui.label("Speed:");
-        ui.add(
-            Slider::new(
-                &mut state.volatile.md_local.viewer.playback_ratio,
-                0.5..=60.0,
-            )
-            .text("fps")
-            .fixed_decimals(1),
-        );
+        wrap_together(ui, "playback_speed", |ui| {
+            ui.label("Speed:");
+            ui.add(
+                Slider::new(
+                    &mut state.volatile.md_local.viewer.playback_ratio,
+                    0.5..=60.0,
+                )
+                .text("fps")
+                .fixed_decimals(1),
+            );
+        });
     });
 
     if let Some(snap_i) = auto_advance

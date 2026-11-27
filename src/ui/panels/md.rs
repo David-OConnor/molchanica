@@ -185,20 +185,22 @@ pub fn md_setup(
             //     backends.push(MdBackend::Orca);
             // }
 
-            ComboBox::from_id_salt(523)
-                .width(80.)
-                .selected_text(state.to_save.md.backend.to_string())
-                .show_ui(ui, |ui| {
-                    for v in backends {
-                        ui.selectable_value(&mut state.to_save.md.backend, v.clone(), v.to_string());
-                    }
-                })
-                .response
-                .on_hover_text(if gfnff {
-                    "Use the Dynamics integrator or xTB's native MD engine."
-                } else {
-                    "Select the MD engine. GROMACS requires an installed executable."
-                });
+            misc::wrap_together(ui, "md_backend", |ui| {
+                ComboBox::from_id_salt(523)
+                    .width(80.)
+                    .selected_text(state.to_save.md.backend.to_string())
+                    .show_ui(ui, |ui| {
+                        for v in backends {
+                            ui.selectable_value(&mut state.to_save.md.backend, v.clone(), v.to_string());
+                        }
+                    })
+                    .response
+                    .on_hover_text(if gfnff {
+                        "Use the Dynamics integrator or xTB's native MD engine."
+                    } else {
+                        "Select the MD engine. GROMACS requires an installed executable."
+                    });
+            });
 
             if state.to_save.md.backend == MdBackend::Gromacs
                 && !external_tools::is_installed(Tool::Gromacs)
@@ -431,23 +433,25 @@ fn run_picker(
 
             ui.add_space(COL_SPACING);
 
-            let picked = ComboBox::from_id_salt("recent_md_runs")
-                .selected_text("Recent MD runs")
-                .height(360.)
-                .show_ui(ui, |ui| {
-                    let runs = md::runs::recent(&state.to_save.recent_md_runs);
-                    if runs.is_empty() {
-                        ui.label("No saved runs");
-                    }
+            let picked = misc::wrap_together(ui, "recent_md_runs", |ui| {
+                ComboBox::from_id_salt("recent_md_runs")
+                    .selected_text("Recent MD runs")
+                    .height(360.)
+                    .show_ui(ui, |ui| {
+                        let runs = md::runs::recent(&state.to_save.recent_md_runs);
+                        if runs.is_empty() {
+                            ui.label("No saved runs");
+                        }
 
-                    runs.into_iter().find(|run| {
-                        ui.selectable_label(false, &run.name)
-                            .on_hover_text(run.directory.display().to_string())
-                            .clicked()
+                        runs.into_iter().find(|run| {
+                            ui.selectable_label(false, &run.name)
+                                .on_hover_text(run.directory.display().to_string())
+                                .clicked()
+                        })
                     })
-                })
-                .inner
-                .flatten();
+                    .inner
+                    .flatten()
+            });
             if let Some(run) = picked {
                 md::runs::open(state, scene, updates, &run.directory, run.legacy.as_deref());
             }
@@ -505,30 +509,33 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
 
     let help_text =
         "Set the integrator to use for molecular dynamics. Verlet Velocity is a good default.";
-    ui.label("Integrator:").on_hover_text(help_text);
-
     let prev = state.to_save.md.config.integrator.clone();
-    ComboBox::from_id_salt(4)
-        .width(80.)
-        .selected_text(state.to_save.md.config.integrator.to_string())
-        .show_ui(ui, |ui| {
-            for v in [
-                Integrator::Leapfrog {
-                    thermostat: Some(TAU_TEMP_DEFAULT),
-                },
-                Integrator::LangevinMiddle {
-                    gamma: LANGEVIN_GAMMA_DEFAULT,
-                },
-                Integrator::VerletVelocity {
-                    thermostat: Some(TAU_TEMP_DEFAULT),
-                },
-            ] {
-                let label = v.to_string();
-                ui.selectable_value(&mut state.to_save.md.config.integrator, v, label);
-            }
-        })
-        .response
-        .on_hover_text(help_text);
+
+    misc::wrap_together(ui, "md_integrator", |ui| {
+        ui.label("Integrator:").on_hover_text(help_text);
+
+        ComboBox::from_id_salt(4)
+            .width(80.)
+            .selected_text(state.to_save.md.config.integrator.to_string())
+            .show_ui(ui, |ui| {
+                for v in [
+                    Integrator::Leapfrog {
+                        thermostat: Some(TAU_TEMP_DEFAULT),
+                    },
+                    Integrator::LangevinMiddle {
+                        gamma: LANGEVIN_GAMMA_DEFAULT,
+                    },
+                    Integrator::VerletVelocity {
+                        thermostat: Some(TAU_TEMP_DEFAULT),
+                    },
+                ] {
+                    let label = v.to_string();
+                    ui.selectable_value(&mut state.to_save.md.config.integrator, v, label);
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+    });
 
     if state.to_save.md.config.integrator != prev {
         if let Integrator::LangevinMiddle { gamma } = state.to_save.md.config.integrator
@@ -553,31 +560,33 @@ fn integrator_cfg(state: &mut State, ui: &mut Ui) {
     } else {
         let help_text =
             "Set to Constrained to allow higher time steps; Flexible may more more accurate.";
-        ui.label("H:").on_hover_text(help_text);
-        ComboBox::from_id_salt(5)
-            .width(80.)
-            .selected_text(state.to_save.md.config.hydrogen_constraint.to_string())
-            .show_ui(ui, |ui| {
-                // todo: Don't hard-code shake tol
-                for v in &[
-                    HydrogenConstraint::Linear {
-                        order: LINCS_ORDER_DEFAULT,
-                        iter: LINCS_ITER_DEFAULT,
-                    },
-                    HydrogenConstraint::Shake {
-                        shake_tolerance: SHAKE_TOL_DEFAULT,
-                    },
-                    HydrogenConstraint::Flexible,
-                ] {
-                    ui.selectable_value(
-                        &mut state.to_save.md.config.hydrogen_constraint,
-                        *v,
-                        v.to_string(),
-                    );
-                }
-            })
-            .response
-            .on_hover_text(help_text);
+        misc::wrap_together(ui, "md_h_constraint", |ui| {
+            ui.label("H:").on_hover_text(help_text);
+            ComboBox::from_id_salt(5)
+                .width(80.)
+                .selected_text(state.to_save.md.config.hydrogen_constraint.to_string())
+                .show_ui(ui, |ui| {
+                    // todo: Don't hard-code shake tol
+                    for v in &[
+                        HydrogenConstraint::Linear {
+                            order: LINCS_ORDER_DEFAULT,
+                            iter: LINCS_ITER_DEFAULT,
+                        },
+                        HydrogenConstraint::Shake {
+                            shake_tolerance: SHAKE_TOL_DEFAULT,
+                        },
+                        HydrogenConstraint::Flexible,
+                    ] {
+                        ui.selectable_value(
+                            &mut state.to_save.md.config.hydrogen_constraint,
+                            *v,
+                            v.to_string(),
+                        );
+                    }
+                })
+                .response
+                .on_hover_text(help_text);
+        });
     }
 
     preparation_cfg(state, ui);
@@ -592,38 +601,40 @@ fn preparation_cfg(state: &mut State, ui: &mut Ui) {
         ui.label("Solvent from saved structure");
     } else {
         let help_text = "Set the solvent";
-        ui.label("Solvent:").on_hover_text(help_text);
-        ComboBox::from_id_salt(6)
-            .width(80.)
-            .selected_text(
-                if matches!(state.to_save.md.config.solvent, Solvent::WaterOpc) {
-                    "Water (force field default)".to_owned()
-                } else {
-                    state.to_save.md.config.solvent.to_string()
-                },
-            )
-            .show_ui(ui, |ui| {
-                // todo: Don't hard-code shake tol
-                for v in &[
-                    Solvent::None,
-                    Solvent::WaterOpc,
-                    Solvent::OctanolWithWater,
-                    // todo: Custom
-                    // Solvent::Custom(),
-                ] {
-                    ui.selectable_value(
-                        &mut state.to_save.md.config.solvent,
-                        v.clone(),
-                        if matches!(v, Solvent::WaterOpc) {
-                            "Water (force field default)".to_owned()
-                        } else {
-                            v.to_string()
-                        },
-                    );
-                }
-            })
-            .response
-            .on_hover_text(help_text);
+        misc::wrap_together(ui, "md_solvent", |ui| {
+            ui.label("Solvent:").on_hover_text(help_text);
+            ComboBox::from_id_salt(6)
+                .width(80.)
+                .selected_text(
+                    if matches!(state.to_save.md.config.solvent, Solvent::WaterOpc) {
+                        "Water (force field default)".to_owned()
+                    } else {
+                        state.to_save.md.config.solvent.to_string()
+                    },
+                )
+                .show_ui(ui, |ui| {
+                    // todo: Don't hard-code shake tol
+                    for v in &[
+                        Solvent::None,
+                        Solvent::WaterOpc,
+                        Solvent::OctanolWithWater,
+                        // todo: Custom
+                        // Solvent::Custom(),
+                    ] {
+                        ui.selectable_value(
+                            &mut state.to_save.md.config.solvent,
+                            v.clone(),
+                            if matches!(v, Solvent::WaterOpc) {
+                                "Water (force field default)".to_owned()
+                            } else {
+                                v.to_string()
+                            },
+                        );
+                    }
+                })
+                .response
+                .on_hover_text(help_text);
+        });
     }
 }
 
@@ -823,8 +834,6 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
     {
         let help = "Set the sim box size. Affects wrapping, SPME logic, and \
         solvent initialization and behavior.";
-        ui.label("Box (Å):").on_hover_text(help);
-
         // Select Fixed or Pad
         let txt = if matches!(state.to_save.md.config.sim_box, SimBoxInit::Fixed(_)) {
             "Fixed"
@@ -833,20 +842,25 @@ fn sim_box(state: &mut State, ui: &mut Ui) {
         };
 
         let prev = state.to_save.md.config.sim_box.clone();
-        ComboBox::from_id_salt(10)
-            .width(60.)
-            .selected_text(txt)
-            .show_ui(ui, |ui| {
-                for v in &[
-                    (SimBoxInit::Pad(12.), "Pad"),
-                    (
-                        SimBoxInit::Fixed((Vec3F32::new_zero(), Vec3F32::new_zero())),
-                        "Fixed",
-                    ),
-                ] {
-                    ui.selectable_value(&mut state.to_save.md.config.sim_box, v.0.clone(), v.1);
-                }
-            });
+
+        misc::wrap_together(ui, "md_sim_box", |ui| {
+            ui.label("Box (Å):").on_hover_text(help);
+
+            ComboBox::from_id_salt(10)
+                .width(60.)
+                .selected_text(txt)
+                .show_ui(ui, |ui| {
+                    for v in &[
+                        (SimBoxInit::Pad(12.), "Pad"),
+                        (
+                            SimBoxInit::Fixed((Vec3F32::new_zero(), Vec3F32::new_zero())),
+                            "Fixed",
+                        ),
+                    ] {
+                        ui.selectable_value(&mut state.to_save.md.config.sim_box, v.0.clone(), v.1);
+                    }
+                });
+        });
 
         if state.to_save.md.config.sim_box != prev {
             state

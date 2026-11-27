@@ -2,7 +2,7 @@
 
 use egui::{
     AsIdSalt, Color32, CornerRadius, CursorIcon, Frame, Id, Label, Margin, Response, RichText,
-    Sense, Slider, Stroke, Ui,
+    Sense, Slider, Stroke, Ui, UiBuilder,
 };
 const COLOR_SECTION_BOX: Color32 = Color32::from_rgb(100, 100, 140);
 /// Unselected options of a selector; a slight orange hue distinguishes them from plain labels.
@@ -142,21 +142,45 @@ pub fn selector<T: PartialEq + Copy>(
         }
     };
 
-    // In a wrapping row, keep the options together on one line, and move the whole box to the
-    // next row if it doesn't fit. Otherwise, the box is squeezed into what's left of the row.
-    if ui.layout().main_wrap() && ui.layout().is_horizontal() {
-        let id_salt = options
-            .iter()
-            .fold(Id::new("selector"), |id, (_, label, _)| id.with(label));
+    let id_salt = options
+        .iter()
+        .fold(Id::new("selector"), |id, (_, label, _)| id.with(label));
 
-        wrapped_section(ui, id_salt, |ui| {
-            selector_box().show(ui, |ui| ui.horizontal(add_options));
-        });
-    } else {
+    wrap_together(ui, id_salt, |ui| {
         selector_box().show(ui, add_options);
-    }
+    });
 
     result
+}
+
+/// Lay out one row of a panel no further right than `right`: the panel's edge, taken before
+/// anything was added to it. When anything overflows a UI, egui widens that UI to match for the
+/// rest of the frame. Without this, every row after one that overflowed would wrap past the edge
+/// of the window too, hiding the items at its end.
+pub fn bounded_row<R>(ui: &mut Ui, right: f32, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
+    let mut rect = ui.available_rect_before_wrap();
+    rect.max.x = rect.max.x.min(right);
+
+    ui.scope_builder(UiBuilder::new().max_rect(rect), add_contents)
+        .inner
+}
+
+/// In a wrapping layout (`horizontal_wrapped`), keep a few items together on one line, moving
+/// them to the next row as a unit if they don't fit on this one. E.g. a label and its dropdown or
+/// slider. Elsewhere, this just adds them. `id_salt` must be unique within the row.
+///
+/// egui's `ComboBox` and `Slider`, like frames, are containers rather than widgets, so they don't
+/// wrap on their own; see `wrapped_section`.
+pub fn wrap_together<R>(
+    ui: &mut Ui,
+    id_salt: impl AsIdSalt,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    if ui.layout().main_wrap() && ui.layout().is_horizontal() {
+        wrapped_section(ui, id_salt, |ui| ui.horizontal(add_contents).inner)
+    } else {
+        add_contents(ui)
+    }
 }
 
 /// Draw a section, e.g. a framed group of widgets, as one item of a wrapping layout

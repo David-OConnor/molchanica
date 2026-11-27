@@ -512,7 +512,6 @@ fn res_coloring_text(coloring: ResColoring, nucleic: bool) -> &'static str {
 
 pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, include_res: bool) {
     let help_text = "(Hotkeys:  ;  and  '  )";
-    ui.label("View/Sel:").on_hover_text(help_text);
     let prev_view = state.ui.view_sel_level;
     let mut view_sel_level = prev_view;
 
@@ -522,17 +521,21 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
         &[ViewSelLevel::AtomBond]
     };
 
-    // Ideally hover text here too, but I'm not sure how.
-    ComboBox::from_id_salt(1)
-        .width(80.)
-        .selected_text(view_sel_level.to_string())
-        .show_ui(ui, |ui| {
-            for &view in views {
-                ui.selectable_value(&mut view_sel_level, view, view.to_string());
-            }
-        })
-        .response
-        .on_hover_text(help_text);
+    misc::wrap_together(ui, "view_sel", |ui| {
+        ui.label("View/Sel:").on_hover_text(help_text);
+
+        // Ideally hover text here too, but I'm not sure how.
+        ComboBox::from_id_salt(1)
+            .width(80.)
+            .selected_text(view_sel_level.to_string())
+            .show_ui(ui, |ui| {
+                for &view in views {
+                    ui.selectable_value(&mut view_sel_level, view, view.to_string());
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+    });
 
     if view_sel_level != prev_view {
         state.set_view_sel_level(view_sel_level);
@@ -566,18 +569,20 @@ pub fn view_sel_selector(state: &mut State, redraw: &mut bool, ui: &mut Ui, incl
             } else {
                 ResColoring::Position
             };
-            ComboBox::from_id_salt(11)
-                .width(40.)
-                .selected_text(res_coloring_text(displayed, nucleic))
-                .show_ui(ui, |ui| {
-                    for &v in options {
-                        ui.selectable_value(
-                            &mut state.ui.res_coloring,
-                            v,
-                            res_coloring_text(v, nucleic),
-                        );
-                    }
-                });
+            misc::wrap_together(ui, "res_coloring", |ui| {
+                ComboBox::from_id_salt(11)
+                    .width(40.)
+                    .selected_text(res_coloring_text(displayed, nucleic))
+                    .show_ui(ui, |ui| {
+                        for &v in options {
+                            ui.selectable_value(
+                                &mut state.ui.res_coloring,
+                                v,
+                                res_coloring_text(v, nucleic),
+                            );
+                        }
+                    });
+            });
 
             if state.ui.res_coloring != prev {
                 state.volatile.flags.update_ss_mesh = true;
@@ -711,22 +716,24 @@ fn misc_view_options(state: &mut State, redraw: &mut bool, ui: &mut Ui) {
                     NEARBY_THRESH_MIN..=NEARBY_THRESH_MAX,
                 );
 
-                if state.ui.dist_filter == DistFilter::NearSfc {
-                    // The same value, displayed as the depth below the surface it maps to.
-                    let scale = SFC_DIST_SCALE as f64;
+                misc::wrap_together(ui, "dist_filter_thresh", |ui| {
+                    if state.ui.dist_filter == DistFilter::NearSfc {
+                        // The same value, displayed as the depth below the surface it maps to.
+                        let scale = SFC_DIST_SCALE as f64;
 
-                    ui.label("Depth:").on_hover_text(
-                        "Hide protein atoms deeper than this below the surface, in Å.",
-                    );
-                    ui.add(
-                        slider
-                            .custom_formatter(move |v, _| format!("{:.1}", v * scale))
-                            .custom_parser(move |s| s.parse::<f64>().ok().map(|v| v / scale)),
-                    );
-                } else {
-                    ui.label("Dist:");
-                    ui.add(slider);
-                }
+                        ui.label("Depth:").on_hover_text(
+                            "Hide protein atoms deeper than this below the surface, in Å.",
+                        );
+                        ui.add(
+                            slider
+                                .custom_formatter(move |v, _| format!("{:.1}", v * scale))
+                                .custom_parser(move |s| s.parse::<f64>().ok().map(|v| v / scale)),
+                        );
+                    } else {
+                        ui.label("Dist:");
+                        ui.add(slider);
+                    }
+                });
 
                 if state.ui.nearby_dist_thresh != dist_prev {
                     *redraw = true;
@@ -1038,34 +1045,36 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
         let close_active_mol = false; // to avoid borrow error.
 
-        top_controls(
-            state,
-            scene,
-            &mut updates,
-            &mut redraw,
-            ui,
-        );
+        // Each row of the panel lays out within this, regardless of whether one above it
+        // overflowed. See `bounded_row`.
+        let right = ui.max_rect().right();
+
+        misc::bounded_row(ui, right, |ui| {
+            top_controls(state, scene, &mut updates, &mut redraw, ui)
+        });
 
         if state.volatile.active_mol.is_some() || state.ligands.len() >= 2 {
-            ui.horizontal_wrapped(|ui| {
-                section_box().show(ui, |ui| {
-                    if state.volatile.active_mol.is_some() {
-                        display_mol_data(
-                            state,
-                            scene,
-                            ui,
-                            &mut redraw.ligand,
-                            &mut updates,
-                        );
-                    }
+            misc::bounded_row(ui, right, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    section_box().show(ui, |ui| {
+                        if state.volatile.active_mol.is_some() {
+                            display_mol_data(
+                                state,
+                                scene,
+                                ui,
+                                &mut redraw.ligand,
+                                &mut updates,
+                            );
+                        }
 
-                    if state.ligands.len() >= 2 && ui.button("Align")
-                        .on_hover_text("Perform flexible alignment on two opened small molecules. This button opens a \
-                    window which lets you configure and run this alignment, then view the resulting 3D conformations,\
-                    and similarity metrics.")
-                        .clicked() {
-                        set_alignment_open(state, !state.ui.popup.alignment);
-                    }
+                        if state.ligands.len() >= 2 && ui.button("Align")
+                            .on_hover_text("Perform flexible alignment on two opened small molecules. This button opens a \
+                        window which lets you configure and run this alignment, then view the resulting 3D conformations,\
+                        and similarity metrics.")
+                            .clicked() {
+                            set_alignment_open(state, !state.ui.popup.alignment);
+                        }
+                    });
                 });
             });
         }
@@ -1077,7 +1086,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
 
         let redraw_prev = redraw.peptide;
 
-        misc_view_options(state, &mut redraw.peptide, ui);
+        misc::bounded_row(ui, right, |ui| {
+            misc_view_options(state, &mut redraw.peptide, ui)
+        });
 
         // todo: Kludge
         if redraw.peptide && !redraw_prev {
@@ -1087,15 +1098,17 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         // One wrapped row shared by the camera controls and the scene snapshots, so items wrap
         // onto new lines when the window is narrow. (A `section_box` per group instead squeezes
         // the second group into whatever width is left on the first row, hiding its buttons.)
-        section_box().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                camera::cam_controls(scene, state, &mut updates, ui);
+        misc::bounded_row(ui, right, |ui| {
+            section_box().show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    camera::cam_controls(scene, state, &mut updates, ui);
 
-                ui.add_space(COL_SPACING / 2.);
-                ui.separator();
-                ui.add_space(COL_SPACING / 2.);
+                    ui.add_space(COL_SPACING / 2.);
+                    ui.separator();
+                    ui.add_space(COL_SPACING / 2.);
 
-                camera::cam_snapshots(state, scene, &mut updates, ui);
+                    camera::cam_snapshots(state, scene, &mut updates, ui);
+                });
             });
         });
 
@@ -1103,35 +1116,47 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
         // individual items wrap onto new lines when the window is too narrow. (Nesting a
         // `section_box` per group here instead squeezes the second group into whatever width is
         // left on the first row, hiding its buttons.)
-        section_box().show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                view_settings(state, scene, &mut updates, &mut redraw, ui);
+        misc::bounded_row(ui, right, |ui| {
+            section_box().show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    view_settings(state, scene, &mut updates, &mut redraw, ui);
 
-                ui.add_space(COL_SPACING / 2.);
-                ui.separator();
-                ui.add_space(COL_SPACING / 2.);
+                    ui.add_space(COL_SPACING / 2.);
+                    ui.separator();
+                    ui.add_space(COL_SPACING / 2.);
 
-                ui_section_vis(state, ui);
+                    ui_section_vis(state, ui);
+                });
             });
         });
 
         if state.ui.ui_vis.aa_selection {
-            panels::aa_selection::aa_selection(state, &mut redraw.peptide, ui);
+            misc::bounded_row(ui, right, |ui| {
+                panels::aa_selection::aa_selection(state, &mut redraw.peptide, ui)
+            });
         }
 
-        mol_type_toolbars(state, scene, &mut updates, ui);
+        misc::bounded_row(ui, right, |ui| {
+            mol_type_toolbars(state, scene, &mut updates, ui)
+        });
 
         if state.ui.ui_vis.dynamics {
-            md_setup(state, scene, &mut updates, ui, &mut redraw);
+            misc::bounded_row(ui, right, |ui| {
+                md_setup(state, scene, &mut updates, ui, &mut redraw)
+            });
         }
-        panels::md_viewer::playback(state, scene, &mut updates, &mut redraw, ui);
+        misc::bounded_row(ui, right, |ui| {
+            panels::md_viewer::playback(state, scene, &mut updates, &mut redraw, ui)
+        });
 
         // todo: Allow switching between chains and secondary-structure features here.
 
         ui.add_space(ROW_SPACING / 2.);
 
         if let Some(seq_i) = state.volatile.active_seq {
-            aa_seq::standalone_sequence(state, seq_i, scene, &mut updates, ui);
+            misc::bounded_row(ui, right, |ui| {
+                aa_seq::standalone_sequence(state, seq_i, scene, &mut updates, ui)
+            });
         } else if state.ui.ui_vis.aa_seq && !state.peptides.is_empty() {
             let peptide_name = state
                 .volatile
@@ -1139,16 +1164,18 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
                 .and_then(|i| state.peptides.get(i))
                 .map(|mol| mol.common.name(None).to_string());
 
-            let create_seq = aa_seq::peptide_aa_seq(
-                &mut state.ui.selection,
-                peptide_name.as_deref(),
-                &state.volatile.aa_seq_text,
-                &state.volatile.aa_seq_res_indices,
-                &state.volatile.aa_seq_res_sns,
-                &mut state.volatile.aa_seq_display_cache,
-                ui,
-                &mut redraw.peptide,
-            );
+            let create_seq = misc::bounded_row(ui, right, |ui| {
+                aa_seq::peptide_aa_seq(
+                    &mut state.ui.selection,
+                    peptide_name.as_deref(),
+                    &state.volatile.aa_seq_text,
+                    &state.volatile.aa_seq_res_indices,
+                    &state.volatile.aa_seq_res_sns,
+                    &mut state.volatile.aa_seq_display_cache,
+                    ui,
+                    &mut redraw.peptide,
+                )
+            });
 
             // The whole sequence, not just the selected residues.
             if create_seq {
@@ -1157,13 +1184,9 @@ pub fn ui_handler(state: &mut State, ui: &mut Ui, scene: &mut Scene) -> EngineUp
             }
         }
 
-        draw_cli(
-            state,
-            scene,
-            &mut updates,
-            &mut redraw,
-            ui,
-        );
+        misc::bounded_row(ui, right, |ui| {
+            draw_cli(state, scene, &mut updates, &mut redraw, ui)
+        });
 
         load_popups(state, scene, ui, &mut redraw, &mut updates);
 

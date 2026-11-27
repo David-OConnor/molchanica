@@ -9,7 +9,7 @@ use crate::{
     state::State,
     ui::{
         COL_SPACING,
-        misc::{toggle_btn, toggle_btn_inv},
+        misc::{toggle_btn, toggle_btn_inv, wrap_together},
     },
     util::RedrawFlags,
 };
@@ -17,24 +17,27 @@ use crate::{
 fn molecule_view_selector(
     ui: &mut Ui,
     label: &str,
-    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    id_salt: &str,
     view: &mut MoleculeView,
     options: &[MoleculeView],
     help_text: &str,
 ) -> bool {
-    ui.label(label).on_hover_text(help_text);
     let prev_view = *view;
 
-    ComboBox::from_id_salt(id_salt)
-        .width(80.)
-        .selected_text(view.to_string())
-        .show_ui(ui, |ui| {
-            for option in options {
-                ui.selectable_value(view, *option, option.to_string());
-            }
-        })
-        .response
-        .on_hover_text(help_text);
+    wrap_together(ui, id_salt, |ui| {
+        ui.label(label).on_hover_text(help_text);
+
+        ComboBox::from_id_salt(id_salt)
+            .width(80.)
+            .selected_text(view.to_string())
+            .show_ui(ui, |ui| {
+                for option in options {
+                    ui.selectable_value(view, *option, option.to_string());
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+    });
 
     *view != prev_view
 }
@@ -320,24 +323,27 @@ pub fn ui_section_vis(state: &mut State, ui: &mut Ui) {
 pub fn mesh_coloring_selector(coloring: &mut MeshColoring, update_flag: &mut bool, ui: &mut Ui) {
     let help_text = "If selected, the solvent-accessible surface will be colored according \
                 to the atoms closest to it. If not, it will display as a constant color.";
-    ui.label("Color sfc:").on_hover_text(help_text);
-
     let prev = *coloring;
-    ComboBox::from_id_salt(9912)
-        .width(80.)
-        .selected_text(coloring.to_string())
-        .show_ui(ui, |ui| {
-            for v in [
-                MeshColoring::Solid,
-                MeshColoring::Element,
-                MeshColoring::PartialCharge,
-                MeshColoring::Lipophilicity,
-            ] {
-                ui.selectable_value(coloring, v, v.to_string());
-            }
-        })
-        .response
-        .on_hover_text(help_text);
+
+    wrap_together(ui, "mesh_coloring", |ui| {
+        ui.label("Color sfc:").on_hover_text(help_text);
+
+        ComboBox::from_id_salt(9912)
+            .width(80.)
+            .selected_text(coloring.to_string())
+            .show_ui(ui, |ui| {
+                for v in [
+                    MeshColoring::Solid,
+                    MeshColoring::Element,
+                    MeshColoring::PartialCharge,
+                    MeshColoring::Lipophilicity,
+                ] {
+                    ui.selectable_value(coloring, v, v.to_string());
+                }
+            })
+            .response
+            .on_hover_text(help_text);
+    });
 
     if *coloring != prev {
         *update_flag = true;

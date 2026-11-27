@@ -186,17 +186,21 @@ pub(crate) fn cam_controls(
         let depth_prev = *depth;
 
         let near_help = "Don't render objects closer to the camera than this distance, in Å.";
-        ui.label("Near(×10):").on_hover_text(near_help);
-        ui.add(Slider::new(
-            &mut depth.0,
-            VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
-        ))
-        .on_hover_text(near_help);
+        misc::wrap_together(ui, "depth_near", |ui| {
+            ui.label("Near(×10):").on_hover_text(near_help);
+            ui.add(Slider::new(
+                &mut depth.0,
+                VIEW_DEPTH_NEAR_MIN..=VIEW_DEPTH_NEAR_MAX,
+            ))
+            .on_hover_text(near_help);
+        });
 
         let far_help = "(Hotkey: Ctrl + scroll) Fade distant objects. This may make it easier to see objects near the camera.";
-        ui.label("Far:").on_hover_text(far_help);
-        ui.add(Slider::new(&mut depth.1, FOG_DIST_MIN..=FOG_DIST_MAX))
-            .on_hover_text(far_help);
+        misc::wrap_together(ui, "depth_far", |ui| {
+            ui.label("Far:").on_hover_text(far_help);
+            ui.add(Slider::new(&mut depth.1, FOG_DIST_MIN..=FOG_DIST_MAX))
+                .on_hover_text(far_help);
+        });
 
         if *depth != depth_prev {
             changed = true;
@@ -233,12 +237,14 @@ fn slab_controls(state: &mut State, ui: &mut Ui) -> bool {
         );
 
         ui.spacing_mut().slider_width = 60.;
-        ui.add(
-            Slider::new(&mut slab.offset, -100.0..=100.0)
-                .clamping(egui::SliderClamping::Never)
-                .text("Slide:"),
-        )
-        .on_hover_text("Positive offset moves away from you.");
+        misc::wrap_together(ui, "slab_slide", |ui| {
+            ui.add(
+                Slider::new(&mut slab.offset, -100.0..=100.0)
+                    .clamping(egui::SliderClamping::Never)
+                    .text("Slide:"),
+            )
+            .on_hover_text("Positive offset moves away from you.");
+        });
 
         ui.label("Offset:");
         ui.add(
@@ -295,21 +301,23 @@ pub(crate) fn cam_snapshots(
     let prev_snap = state.ui.cam_snapshot;
     let snap_name = ui::get_snap_name(prev_snap, &state.cam_snapshots);
 
-    ComboBox::from_id_salt(2)
-        .width(80.)
-        .selected_text(snap_name)
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut state.ui.cam_snapshot, None, "(None)");
-            for (i, _snap) in state.cam_snapshots.iter().enumerate() {
-                ui.selectable_value(
-                    &mut state.ui.cam_snapshot,
-                    Some(i),
-                    ui::get_snap_name(Some(i), &state.cam_snapshots),
-                );
-            }
-        })
-        .response
-        .on_hover_text("Restore the saved scene appearance and camera.");
+    misc::wrap_together(ui, "scene_select", |ui| {
+        ComboBox::from_id_salt(2)
+            .width(80.)
+            .selected_text(snap_name)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.ui.cam_snapshot, None, "(None)");
+                for (i, _snap) in state.cam_snapshots.iter().enumerate() {
+                    ui.selectable_value(
+                        &mut state.ui.cam_snapshot,
+                        Some(i),
+                        ui::get_snap_name(Some(i), &state.cam_snapshots),
+                    );
+                }
+            })
+            .response
+            .on_hover_text("Restore the saved scene appearance and camera.");
+    });
 
     if let Some(index) = state.ui.cam_snapshot
         && ui.button("Update scene").clicked()
