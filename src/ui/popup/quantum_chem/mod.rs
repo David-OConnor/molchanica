@@ -1,4 +1,4 @@
-//! The quantum chemistry window. Psi4 runs through the shared tool runner; ORCA through its own
+//! The quantum chemistry window. Psi4 and PySCF run through the shared tool runner; ORCA through its own
 //! form ([`orca`]) and the same runner's progress, history, and results browser.
 
 pub(super) mod orca;
@@ -39,12 +39,12 @@ use crate::{
 };
 
 /// The backends this window offers.
-const BACKENDS: [Tool; 2] = [Tool::Psi4, Tool::Orca];
+const BACKENDS: [Tool; 3] = [Tool::Psi4, Tool::PyScf, Tool::Orca];
 
 /// Work the tool window asks of this window, which needs the rest of the program's state.
 pub(super) enum QcRequest {
-    /// Put the active molecule's atoms in the Psi4 geometry.
-    Psi4Geometry,
+    /// Put the active molecule's atoms in the selected form's geometry.
+    FormGeometry,
     /// Put the active molecule's atoms in the ORCA geometry.
     OrcaGeometry,
     /// Write the ORCA input text from its parameters.
@@ -94,7 +94,7 @@ pub(super) fn window(
         compute_selector(
             ui,
             &mut state.to_save.quantum_compute_target,
-            "Run on this computer's CPU. Install the selected backend first.",
+            "Run on this computer. Install the selected backend first.",
         );
 
         ui.add_space(COL_SPACING);
@@ -178,22 +178,22 @@ fn active_mol(state: &State) -> Option<orca::ActiveMol> {
 
 fn handle_request(state: &mut State, request: QcRequest, redraw: &mut RedrawFlags, ui: &Ui) {
     let geometry = match request {
-        QcRequest::Psi4Geometry | QcRequest::OrcaGeometry => active_geometry(state),
+        QcRequest::FormGeometry | QcRequest::OrcaGeometry => active_geometry(state),
         _ => None,
     };
     let computations = &state.volatile.ongoing_computations;
     let window = state.ui.tool_windows.quantum_chem();
 
     match request {
-        QcRequest::Psi4Geometry | QcRequest::OrcaGeometry => {
+        QcRequest::FormGeometry | QcRequest::OrcaGeometry => {
             let Some((target, atoms)) = geometry else {
                 window.set_error("No active molecule. Select one first.".to_owned());
                 return;
             };
 
             let rows = xyz_rows(&atoms);
-            if matches!(request, QcRequest::Psi4Geometry) {
-                window.set_psi4_geometry(rows, &target.ident);
+            if matches!(request, QcRequest::FormGeometry) {
+                window.set_form_geometry(rows, &target.ident);
             } else {
                 let charge_sum = window.active_mol.as_ref().and_then(|mol| mol.charge_sum);
                 window.orca.set_geometry(rows, target, charge_sum);
@@ -348,14 +348,14 @@ impl InputPreview {
     }
 }
 
-/// How long Psi4's parameters must be unchanged before its preview is remade. Each conversion
+/// How long the parameters must be unchanged before its preview is remade. Each conversion
 /// starts Python.
-const PSI4_PREVIEW_DELAY: Duration = Duration::from_millis(400);
+const PYTHON_PREVIEW_DELAY: Duration = Duration::from_millis(400);
 
-/// Keeps the Psi4 preview current: converts the parameters in the background, through the writer
+/// Keeps the quantum chemistry preview current: converts the parameters in the background, through the writer
 /// Run uses, once they stop changing.
 #[derive(Default)]
-pub(super) struct Psi4Preview {
+pub(super) struct PythonPreview {
     pub preview: InputPreview,
     /// The values last converted, or being converted.
     requested: Option<HashMap<String, String>>,
@@ -364,15 +364,23 @@ pub(super) struct Psi4Preview {
     receiver: Option<mpsc::Receiver<io::Result<HashMap<String, String>>>>,
 }
 
-impl Psi4Preview {
+impl PythonPreview {
     /// Call each frame "Set parameters here" is shown, with its current values.
-    pub(super) fn update(&mut self, values: HashMap<String, String>, ctx: &egui::Context) {
+    pub(super) fn update(
+        &mut self,
+        tool: Tool,
+        values: HashMap<String, String>,
+        ctx: &egui::Context,
+    ) {
         if let Some(receiver) = &self.receiver {
             match receiver.try_recv() {
                 Ok(Ok(mut projected)) => {
                     self.receiver = None;
-                    self.preview
-                        .set(projected.remove("psi4_input").unwrap_or_default());
+                    self.preview.set(
+                        projected
+                            .remove(&format!("{}_input", tool.spec().slug()))
+                            .unwrap_or_default(),
+                    );
                 }
                 Ok(Err(error)) => {
                     self.receiver = None;
@@ -398,7 +406,7 @@ impl Psi4Preview {
         {
             // The first preview needn't wait.
             let delay = if self.requested.is_some() {
-                PSI4_PREVIEW_DELAY
+                PYTHON_PREVIEW_DELAY
             } else {
                 Duration::ZERO
             };
@@ -414,7 +422,9 @@ impl Psi4Preview {
                 self.receiver = Some(receiver);
 
                 thread::spawn(move || {
-                    let _ = sender.send(external_tools::psi4::project(values, "text"));
+                    let _ = sender.send(external_tools::quantum_python::project(
+                        tool, values, "text",
+                    ));
                     ctx.request_repaint();
                 });
             }
@@ -781,10 +791,11 @@ const PSI4_PROPERTIES: &[Choice] = &[
     c("oscillator_strength", "Oscillator strengths", "", "Coupled-cluster excited states."),
 ];
 
-pub(super) fn filter_input_files(config: &mut FileDialogConfig, field: &FormField) {
+pub(super) fn filter_input_files(config: &mut FileDialogConfig, tool: Tool, field: &FormField) {
+    let label = format!("{tool} inputs");
     let extensions = field.accepted_extensions();
     *config = std::mem::take(config).add_file_filter(
-        "Psi4 inputs",
+        &label,
         Filter::new(move |path: &Path| {
             path.extension()
                 .and_then(|extension| extension.to_str())
@@ -795,7 +806,7 @@ pub(super) fn filter_input_files(config: &mut FileDialogConfig, field: &FormFiel
                 })
         }),
     );
-    config.default_file_filter = Some("Psi4 inputs".into());
+    config.default_file_filter = Some(label);
 }
 
 pub(super) fn set_file_format(values: &mut HashMap<String, String>, path: &Path) {
@@ -824,7 +835,7 @@ fn output_path(path: &Path) -> Option<(&str, &str)> {
 pub(super) fn is_final_geometry(path: &Path) -> bool {
     matches!(
         output_path(path),
-        Some(("summary", "geometry.xyz") | (_, "optimized.xyz"))
+        Some(("summary" | "pyscf", "geometry.xyz") | (_, "optimized.xyz"))
     )
 }
 
@@ -843,11 +854,37 @@ pub(super) fn output_name(path: &Path) -> Option<&'static str> {
     }
 
     match output_path(path)? {
-        ("summary", "summary.json") => Some("Calculation summary (JSON)"),
+        ("pyscf", "gradient.csv") => Some("Nuclear gradient (CSV)"),
+        ("summary" | "pyscf", "summary.json") => Some("Calculation summary (JSON)"),
         ("summary", "frequencies.csv") => Some("Vibrational modes (CSV)"),
         ("psi4", "output.dat") | (_, "psi4.out") => Some("Psi4 output"),
         _ => None,
     }
+}
+
+pub(super) fn pyscf_summary_ui(details: &Value, lists: &mut PageLists, ui: &mut Ui) {
+    ui.strong("PySCF calculation");
+    if let Some(energy) = details["energy_hartree"].as_f64() {
+        let device = details["device"].as_str().unwrap_or("").to_uppercase();
+        ui.label(format!("Total energy  {energy:.12} Eₕ   {device}"));
+    }
+    if let Some(modes) = details["frequencies_cm1"].as_array() {
+        CollapsingHeader::new("Harmonic frequencies (cm⁻¹)").show(ui, |ui| {
+            lists.show(ui, "pyscf_frequencies", 150.0, |ui| {
+                for (i, mode) in modes.iter().enumerate() {
+                    ui.label(format!("{}    {}", i + 1, number(mode, 2)));
+                }
+            });
+        });
+    }
+    if let Some(output) = details["stdout"].as_str().filter(|s| !s.is_empty()) {
+        CollapsingHeader::new("Python output").show(ui, |ui| {
+            lists.show(ui, "pyscf_stdout", 180.0, |ui| {
+                ui.monospace(output);
+            });
+        });
+    }
+    ui.separator();
 }
 
 pub(super) fn summary_ui(details: &Value, lists: &mut PageLists, ui: &mut Ui) {

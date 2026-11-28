@@ -874,7 +874,7 @@ fn top_controls(
                 ui,
                 "Q chem",
                 COLOR_HIGHLIGHT,
-                "Run quantum chemistry calculations with Psi4 or ORCA."
+                "Run quantum chemistry calculations with Psi4, PySCF or ORCA."
             )
             .clicked()
             {

@@ -263,8 +263,8 @@ impl AdapterResult {
 /// uv caches this small, separate coordinator environment. Model packages stay in their own
 /// `bio_tools`-managed environments, which often have incompatible pins.
 fn coordinator_command(tool: Tool) -> io::Result<Command> {
-    if tool == Tool::Psi4 {
-        let spec = super::psi4::coordinator()?;
+    if matches!(tool, Tool::Psi4 | Tool::PyScf) {
+        let spec = super::quantum_python::coordinator(tool)?;
         let mut command = Command::new(spec.program);
         command.args(spec.arguments).envs(spec.environment);
 

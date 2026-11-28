@@ -85,6 +85,7 @@ pub mod mpnn;
 
 pub mod pdb_write;
 pub(crate) mod psi4;
+pub(crate) mod quantum_python;
 
 pub use manage::{install, uninstall};
 pub use paths::{

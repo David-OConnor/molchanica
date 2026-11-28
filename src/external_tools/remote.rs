@@ -189,7 +189,7 @@ fn local_details(slug: &str, job: &Job, unpacked: &Path) -> io::Result<Value> {
     let run_logs = run_log_dirs(unpacked)?;
     let Some(first) = run_logs.first() else {
         return Err(with_link(
-            "The downloaded results hold no outputs folder".to_owned(),
+            "The downloaded results contain no run log".to_owned(),
             job,
         ));
     };
@@ -226,14 +226,14 @@ fn local_details(slug: &str, job: &Job, unpacked: &Path) -> io::Result<Value> {
 /// The run-log directories in an unpacked archive: one folder per command the run executed, each
 /// holding `outputs`, or the archive's root if it holds `outputs` itself.
 fn run_log_dirs(unpacked: &Path) -> io::Result<Vec<PathBuf>> {
-    if unpacked.join("outputs").is_dir() {
+    if unpacked.join("outputs").is_dir() || unpacked.join("stdout.txt").is_file() {
         return Ok(vec![unpacked.to_owned()]);
     }
 
     let mut dirs = Vec::new();
     for entry in fs::read_dir(unpacked)? {
         let path = entry?.path();
-        if path.join("outputs").is_dir() {
+        if path.join("outputs").is_dir() || path.join("stdout.txt").is_file() {
             dirs.push(path);
         }
     }
@@ -246,6 +246,9 @@ fn run_log_dirs(unpacked: &Path) -> io::Result<Vec<PathBuf>> {
 /// selects them: audit snapshots include unchanged copies of the inputs too.
 fn collect_outputs(log: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
     let outputs = log.join("outputs");
+    if !outputs.exists() {
+        return Ok(());
+    }
     let mut found = Vec::new();
     collect_files(&outputs, &mut found)?;
 

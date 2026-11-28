@@ -32,6 +32,7 @@ pub enum Tool {
     RfDiffusion3,
     Gromacs,
     Psi4,
+    PyScf,
     Orca,
     Xtb,
     Gemmi,
@@ -40,7 +41,7 @@ pub enum Tool {
 impl Tool {
     /// Every tool, in the order the status panel lists them: prediction and design first, then the
     /// simulation and file-format helpers.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::OpenDde,
         Self::Boltz2,
         Self::Chai1,
@@ -54,6 +55,7 @@ impl Tool {
         Self::RdKit,
         Self::Gromacs,
         Self::Psi4,
+        Self::PyScf,
         Self::Orca,
         Self::Xtb,
         Self::Gemmi,
@@ -588,6 +590,23 @@ pub static REGISTRY: &[ToolSpec] = &[
         kind: ToolKind::CondaScript,
         adapter: ToolAdapter::SharedAdapter,
         executable: "psi4",
+        exe_override_env: None,
+        root_override_env: None,
+        bundle_root_override_env: None,
+        bundle_subdir: None,
+        required_assets: &[],
+        molchanica_managed: true,
+        install_hint: MANAGED_HINT,
+        version_args: &[],
+        version_marker: "",
+        slow_probe: true,
+    },
+    ToolSpec {
+        tool: Tool::PyScf,
+        catalog_slug: "pyscf",
+        kind: ToolKind::VenvPython,
+        adapter: ToolAdapter::SharedAdapter,
+        executable: "python",
         exe_override_env: None,
         root_override_env: None,
         bundle_root_override_env: None,

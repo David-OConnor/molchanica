@@ -133,7 +133,7 @@ pub fn check(tool: Tool) -> ToolStatus {
         path: Some(executable.clone()),
     };
 
-    if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3 | Tool::Psi4)
+    if matches!(tool, Tool::OpenFold3 | Tool::AlphaFold3 | Tool::Psi4 | Tool::PyScf)
         && spec.exe_override_env.and_then(std::env::var_os).is_none()
         && spec.root_override_env.and_then(std::env::var_os).is_none()
         && spec

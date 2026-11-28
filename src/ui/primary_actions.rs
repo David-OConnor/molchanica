@@ -87,7 +87,7 @@ fn commands(state: &State) -> Vec<action_search::Command<Run>> {
         ("Show molecular dynamics (MD)", |state, _, _, _| {
             state.ui.ui_vis.dynamics = true;
         }),
-        ("Quantum chemistry (Psi4, ORCA)", |state, _, _, _| {
+        ("Quantum chemistry (Psi4, PySCF, ORCA)", |state, _, _, _| {
             state.ui.popup.quantum_chem = true;
         }),
         ("Show lipid creation", |state, _, _, _| {

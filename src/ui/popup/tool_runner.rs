@@ -29,7 +29,7 @@ use super::{
     external_tools::tool_links,
     flex_lists::{self, PageLists},
     quantum_chem::{
-        self, Psi4Preview, QcRequest,
+        self, PythonPreview, QcRequest,
         orca::{ActiveMol, OrcaForm},
     },
 };
@@ -183,7 +183,7 @@ impl ToolWindowKind {
             ],
             Self::SequenceDesign => &[Tool::ProteinMpnn, Tool::LigandMpnn],
             Self::BackboneDesign => &[Tool::RfDiffusion3],
-            Self::QuantumChemistry => &[Tool::Psi4, Tool::Orca],
+            Self::QuantumChemistry => &[Tool::Psi4, Tool::PyScf, Tool::Orca],
         }
     }
 }
@@ -994,8 +994,8 @@ pub(crate) struct ToolWindow {
     pub(super) active_mol: Option<ActiveMol>,
     /// Work for the quantum chemistry window, which has the rest of the program's state.
     request: Option<QcRequest>,
-    /// The input Psi4's "Set parameters here" makes, shown above it.
-    psi4_preview: Psi4Preview,
+    /// The generated quantum chemistry input, shown above it.
+    python_preview: PythonPreview,
 }
 
 impl ToolWindow {
@@ -1034,7 +1034,7 @@ impl ToolWindow {
             orca: OrcaForm::default(),
             active_mol: None,
             request: None,
-            psi4_preview: Psi4Preview::default(),
+            python_preview: PythonPreview::default(),
         }
     }
 
@@ -1043,7 +1043,10 @@ impl ToolWindow {
     }
 
     pub(super) fn set_tool(&mut self, tool: Tool) {
-        self.tool = tool;
+        if self.tool != tool {
+            self.python_preview = PythonPreview::default();
+            self.tool = tool;
+        }
     }
 
     pub(super) fn take_request(&mut self) -> Option<QcRequest> {
@@ -1055,9 +1058,9 @@ impl ToolWindow {
         self.error = Some(error);
     }
 
-    /// Replace the Psi4 geometry, e.g. with the active molecule's.
-    pub(super) fn set_psi4_geometry(&mut self, coordinates: String, name: &str) {
-        let Some(form) = self.forms.get_mut(&Tool::Psi4) else {
+    /// Replace the selected form's geometry, e.g. with the active molecule's.
+    pub(super) fn set_form_geometry(&mut self, coordinates: String, name: &str) {
+        let Some(form) = self.forms.get_mut(&self.tool) else {
             return;
         };
 
@@ -1072,7 +1075,11 @@ impl ToolWindow {
         }
 
         form.values.insert("coordinates".into(), coordinates);
-        form.values.insert("molecule_name".into(), name);
+        if self.tool == Tool::PyScf {
+            form.values.insert("unit".into(), "Angstrom".into());
+        } else {
+            form.values.insert("molecule_name".into(), name);
+        }
         form.authoritative_mode = form.mode.clone();
         form.projection_error = None;
         self.error = None;
@@ -1397,7 +1404,7 @@ impl ToolWindow {
                 form.opened_protein = Some(index);
             }
 
-            if self.tool == Tool::Psi4 && form.mode == "parameters" {
+            if matches!(self.tool, Tool::Psi4 | Tool::PyScf) && form.mode == "parameters" {
                 let mut values = form.contract.defaults();
                 for field in &form.contract.fields {
                     if field.applies_to("parameters")
@@ -1406,14 +1413,14 @@ impl ToolWindow {
                         values.insert(field.name.clone(), value.clone());
                     }
                 }
-                self.psi4_preview.update(values, ui.ctx());
+                self.python_preview.update(self.tool, values, ui.ctx());
 
                 // Shared with the form below; see `fields_ui`.
                 let space =
                     ui.available_height() - self.footer_height - ui.spacing().item_spacing.y;
                 quantum_chem::input_preview_ui(
-                    &self.psi4_preview.preview,
-                    "psi4_input_preview",
+                    &self.python_preview.preview,
+                    "quantum_input_preview",
                     space,
                     ui,
                 );
@@ -1435,7 +1442,7 @@ impl ToolWindow {
         });
 
         if use_active_mol {
-            self.request = Some(QcRequest::Psi4Geometry);
+            self.request = Some(QcRequest::FormGeometry);
         }
 
         if let Some((target, index)) = use_sequence
@@ -1453,10 +1460,10 @@ impl ToolWindow {
         }
 
         if let Some(field) = pick {
-            if self.tool == Tool::Psi4
+            if matches!(self.tool, Tool::Psi4 | Tool::PyScf)
                 && let Some(field) = form.contract.field(&field)
             {
-                quantum_chem::filter_input_files(self.dialog.config_mut(), field);
+                quantum_chem::filter_input_files(self.dialog.config_mut(), self.tool, field);
             }
             self.file_action = Some(FileAction::Input(self.tool, field));
             self.dialog.pick_file();
@@ -1502,7 +1509,7 @@ impl ToolWindow {
             ui.label(RichText::new(note).small());
             if ui
                 .add_enabled(
-                    self.tool != Tool::Psi4 || !busy,
+                    !matches!(self.tool, Tool::Psi4 | Tool::PyScf) || !busy,
                     Button::new("Open saved run…"),
                 )
                 .on_hover_text("Choose result.json from a saved run folder.")
@@ -1542,11 +1549,13 @@ impl ToolWindow {
                 Some("converting input".into()),
             );
             self.start_job(ui, JobAction::ProjectInput, computation, move || {
-                let result = external_tools::psi4::project(values, &target).map(|projected| {
-                    target_values.extend(projected);
+                let result = external_tools::quantum_python::project(tool, values, &target).map(
+                    |projected| {
+                        target_values.extend(projected);
 
-                    target_values
-                });
+                        target_values
+                    },
+                );
                 JobResult::ProjectInput(result)
             });
         }
@@ -1584,7 +1593,8 @@ impl ToolWindow {
                     self.start_job(ui, JobAction::Run, computation, move || {
                         let result = (|| {
                             if let Some(values) = psi4_cube_values {
-                                let mut projected = external_tools::psi4::project(values, "text")?;
+                                let mut projected =
+                                    external_tools::quantum_python::project(tool, values, "text")?;
                                 let input = projected.remove("psi4_input").ok_or_else(|| {
                                     io::Error::other("The Psi4 input converter returned no input")
                                 })?;
@@ -1794,7 +1804,7 @@ impl ToolWindow {
                     }
                     if tool == Tool::Psi4 {
                         quantum_chem::set_file_format(&mut form.values, &path);
-                    } else {
+                    } else if tool != Tool::PyScf {
                         form.authoritative_mode = form.mode.clone();
                     }
                     form.values.insert(field, path.display().to_string());
@@ -1934,6 +1944,9 @@ impl ToolWindow {
         }
 
         let (tool, result) = &self.results[self.selected_result];
+        if *tool == Tool::PyScf {
+            quantum_chem::pyscf_summary_ui(&result.details, lists, ui);
+        }
         if *tool == Tool::Psi4 {
             quantum_chem::summary_ui(&result.details, lists, ui);
         }
@@ -2026,7 +2039,7 @@ impl ToolWindow {
         lists.show(ui, "tool_result_files", 180.0, |ui| {
             for path in &result.files {
                 ui.horizontal(|ui| {
-                    if matches!(tool, Tool::Psi4 | Tool::Orca)
+                    if matches!(tool, Tool::Psi4 | Tool::PyScf | Tool::Orca)
                         && crate::volume::is_cube(path)
                         && ui
                             .button(RichText::new("Open in viewer").color(COLOR_ACTION))
@@ -2251,7 +2264,7 @@ fn read_output_text(path: &Path, maximum: u64) -> io::Result<String> {
 
 /// An output's path relative to the run's `outputs` folder, when it is under it.
 fn output_label(tool: Tool, result: &AdapterResult, path: &Path) -> String {
-    if tool == Tool::Psi4
+    if matches!(tool, Tool::Psi4 | Tool::PyScf)
         && let Some(label) = quantum_chem::output_name(path)
     {
         return label.into();
@@ -2300,7 +2313,7 @@ fn primary_file(tool: Tool, result: &AdapterResult) -> Option<PathBuf> {
         return quantum_chem::orca::primary_file(&result.details, &result.files);
     }
 
-    if tool == Tool::Psi4
+    if matches!(tool, Tool::Psi4 | Tool::PyScf)
         && let Some(geometry) = result
             .files
             .iter()
@@ -2503,9 +2516,9 @@ fn mode_and_task_ui(tool: Tool, form: &mut Form, ui: &mut Ui) -> bool {
         if form.mode != previous {
             match tool {
                 Tool::RfDiffusion3 => form.project_mode(),
-                Tool::Psi4 => {
+                Tool::Psi4 | Tool::PyScf => {
                     form.projection_error = None;
-                    if previous == "upload" || form.mode == "upload" {
+                    if tool == Tool::Psi4 && (previous == "upload" || form.mode == "upload") {
                         let format = form.values.entry("input_format".into()).or_default();
                         std::mem::swap(format, &mut form.upload_format);
                     }
@@ -2566,7 +2579,7 @@ fn fields_ui(
 
     // Psi4's parameters, in two columns where there's room. Decided outside the scroll area, so
     // its scroll bar coming and going can't flip it.
-    let two_columns = tool == Tool::Psi4
+    let two_columns = matches!(tool, Tool::Psi4 | Tool::PyScf)
         && form.mode == "parameters"
         && ui.available_width() >= quantum_chem::TWO_COLUMN_MIN_WIDTH;
 
@@ -2595,7 +2608,7 @@ fn fields_ui(
 
                 CollapsingHeader::new(title)
                     .id_salt((shared_adapter::slug(tool), label))
-                    .default_open(index == 0 || tool == Tool::Psi4)
+                    .default_open(index == 0 || matches!(tool, Tool::Psi4 | Tool::PyScf))
                     .show(ui, |ui| {
                         if let Some(url) = group.and_then(|group| group.docs_url.as_deref()) {
                             ui.hyperlink_to("Parameter documentation", url);
@@ -2669,7 +2682,7 @@ fn fields_ui(
         quantum_chem::set_file_format(&mut form.values, Path::new(path.trim()));
     }
     if edited_input && tool == Tool::RfDiffusion3
-        || tool == Tool::Psi4
+        || matches!(tool, Tool::Psi4 | Tool::PyScf)
             && form.mode != "upload"
             && (edited_input || (changed_format && form.projection_error.is_none()))
     {
@@ -2784,7 +2797,7 @@ fn draw_field(
             .response
         }
         FieldKind::TextArea => {
-            if tool == Tool::Psi4 && field.name == "coordinates" {
+            if matches!(tool, Tool::Psi4 | Tool::PyScf) && field.name == "coordinates" {
                 ui.horizontal(|ui| {
                     ui.label(&label);
                     if ui
@@ -2821,7 +2834,7 @@ fn draw_field(
             }
             let rows = field.rows.unwrap_or(3);
             let editor = TextEdit::multiline(value).desired_width(f32::INFINITY);
-            let editor = if tool == Tool::Psi4 {
+            let editor = if matches!(tool, Tool::Psi4 | Tool::PyScf) {
                 editor.code_editor().desired_rows(rows.max(2))
             } else {
                 editor.desired_rows(rows.clamp(2, 12))

@@ -1,16 +1,6 @@
-use std::{collections::HashMap, env, io, path::Path};
+use std::collections::HashMap;
 
-use bio_tools::{
-    adapters,
-    run::{self, CaptureLimits, CommandSpec},
-    tool_definitions::Tool as InstallableTool,
-};
-use serde_json::json;
-
-use super::{Tool, manage::managed_installer, tool_form::FormContract};
-
-const DESKTOP: &str =
-    "import runpy; runpy.run_module('bio_tool_adapters.desktop', run_name='__main__')";
+use super::tool_form::FormContract;
 
 const CUBE_FIELDS: &str = r#"[
     {"name":"cube_density","label":"Electron and spin density","kind":"checkbox","default":false,"group":"Cube files","input_modes":"parameters"},
@@ -19,7 +9,7 @@ const CUBE_FIELDS: &str = r#"[
     {"name":"cube_orbitals","label":"Orbital indices","kind":"text","default":"","help":"1-based indices in energy order within each spin channel. Separate with spaces or commas. Positive for alpha, negative for beta.","group":"Cube files","input_modes":"parameters"}
 ]"#;
 
-const CONVERT: &str = r#"
+pub(super) const CONVERT: &str = r#"
 import ast
 import json
 import re
@@ -169,68 +159,4 @@ pub(crate) fn wants_cubes(values: &HashMap<String, String>) -> bool {
         || values
             .get("cube_orbitals")
             .is_some_and(|value| !value.trim().is_empty())
-}
-
-fn python() -> io::Result<CommandSpec> {
-    Ok(managed_installer()?.tool_python_command(InstallableTool::Psi4))
-}
-
-fn with_adapter(python: CommandSpec, script: &str) -> io::Result<CommandSpec> {
-    let bootstrap = format!(
-        "import sys; sys.path.insert(0,sys.argv.pop(1)); \
-         import bio_tools_desktop; bio_tools_desktop.install();\n{script}"
-    );
-
-    Ok(python
-        .args(["-B", "-X", "utf8", "-c"])
-        .arg(bootstrap)
-        .arg(adapters::package_path()?)
-        .env("BIO_TOOLS_ADAPTER_HOST", env::current_exe()?))
-}
-
-pub(super) fn coordinator() -> io::Result<CommandSpec> {
-    super::find_executable(Tool::Psi4)?;
-
-    with_adapter(python()?, DESKTOP)
-}
-
-/// Convert editable input modes through the same parser and writer as bio_web.
-pub(crate) fn project(
-    mut values: HashMap<String, String>,
-    target: &str,
-) -> io::Result<HashMap<String, String>> {
-    if target == "text" && !uses_basis(&values) {
-        values.remove("basis");
-    }
-
-    let mut python = python()?;
-    if !Path::new(&python.program).is_file() {
-        python = CommandSpec::new(if cfg!(windows) { "python" } else { "python3" }).arg("-I");
-    }
-
-    let command = with_adapter(python, CONVERT)?
-        .stdin(serde_json::to_vec(
-            &json!({ "values": values, "target": target }),
-        )?)
-        .capture_limits(CaptureLimits::new(2_000_000, 16_000));
-    let output = run::run(&command).map_err(|error| {
-        if error.io_error_kind() == Some(io::ErrorKind::NotFound) {
-            io::Error::other("Input conversion needs Psi4 or Python 3 on PATH.")
-        } else {
-            io::Error::other(error)
-        }
-    })?;
-    let result: Projection = serde_json::from_slice(&output.stdout)?;
-
-    match result {
-        Projection::Values { values } => Ok(values),
-        Projection::Error { error } => Err(io::Error::other(error)),
-    }
-}
-
-#[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum Projection {
-    Values { values: HashMap<String, String> },
-    Error { error: String },
 }
